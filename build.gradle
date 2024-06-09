@@ -1,0 +1,10 @@
+task assemble(type: Zip) {
+    dependsOn ':app:assemble'
+    from('app/build/outputs/apk/debug/app-debug.apk') {
+        rename 'app-debug.apk', 'nfcterm.apk'
+    }
+    from('src/nfcterm.sh')
+    archiveFileName.set('nfcterm.zip')
+    destinationDirectory.set(buildDir)
+}
+
