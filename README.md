@@ -1,6 +1,7 @@
 esim-cli
 ========
 
+![](./logo.png)
 
 1. ```shell
    adb install esim-cli.apk
