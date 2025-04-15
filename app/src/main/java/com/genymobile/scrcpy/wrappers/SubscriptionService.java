@@ -29,7 +29,7 @@ public final class SubscriptionService {
 
     private Method getGetAvailableSubscriptionInfoListMethod() throws NoSuchMethodException {
         if (getAvailableSubscriptionInfoListMethod == null) {
-            getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList", String.class, String.class);
+            getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList", String.class);
         }
         return getAvailableSubscriptionInfoListMethod;
     }
@@ -37,7 +37,7 @@ public final class SubscriptionService {
     public List<SubscriptionInfo> getAvailableSubscriptionInfoList() {
         try {
             Method method = getGetAvailableSubscriptionInfoListMethod();
-            return (List<SubscriptionInfo>) method.invoke(service, FakeContext.PACKAGE_NAME, null);
+            return (List<SubscriptionInfo>) method.invoke(service, FakeContext.PACKAGE_NAME);
         } catch (ReflectiveOperationException e) {
             Ln.e("Could not invoke method", e);
             return null;

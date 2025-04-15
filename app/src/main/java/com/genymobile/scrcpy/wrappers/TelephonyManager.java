@@ -5,16 +5,15 @@ import com.genymobile.scrcpy.Ln;
 
 import android.annotation.SuppressLint;
 import android.os.IInterface;
-import android.telephony.UiccCardInfo;
+import android.telephony.UiccSlotInfo;
 
 import java.lang.reflect.Method;
-import java.util.List;
 
 @SuppressLint("PrivateApi,DiscouragedPrivateApi")
 public final class TelephonyManager {
 
     private final IInterface manager;
-    private Method getUiccCardsInfoMethod;
+    private Method getUiccSlotsInfoMethod;
 
     static TelephonyManager create() {
         IInterface manager = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
@@ -25,21 +24,21 @@ public final class TelephonyManager {
         this.manager = manager;
     }
 
-    private Method getGetUiccCardsInfoMethod() throws NoSuchMethodException {
-        if (getUiccCardsInfoMethod == null) {
-            getUiccCardsInfoMethod = manager.getClass().getMethod("getUiccCardsInfo", String.class);
+    private Method getGetUiccSlotsInfoMethod() throws NoSuchMethodException {
+        if (getUiccSlotsInfoMethod == null) {
+            getUiccSlotsInfoMethod = manager.getClass().getMethod("getUiccSlotsInfo");
         }
-        return getUiccCardsInfoMethod;
+        return getUiccSlotsInfoMethod;
     }
 
-    public List<UiccCardInfo> getUiccCardsInfo() {
+    public UiccSlotInfo[] getUiccSlotsInfo() {
         try {
-            Method method = getGetUiccCardsInfoMethod();
-            return (List<UiccCardInfo>) method.invoke(manager, FakeContext.PACKAGE_NAME);
+            Method method = getGetUiccSlotsInfoMethod();
+            return (UiccSlotInfo[]) method.invoke(manager);
         } catch (ReflectiveOperationException e) {
-            Ln.e("Could not invoke method", e);
+            Ln.e("Could not invoke getUiccSlotsInfo method", e);
             return null;
         }
     }
-
 }
+
