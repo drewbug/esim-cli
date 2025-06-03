@@ -147,6 +147,11 @@ public class ShellMain {
                 if (transportInfo != null) {
                     System.out.printf("    Transport Info: %s%n", transportInfo.toString());
                 }
+                
+                Object networkSpecifier = connectivityManager.getNetworkSpecifier(capabilities);
+                if (networkSpecifier != null) {
+                    System.out.printf("    Network Specifier: %s%n", networkSpecifier.toString());
+                }
             } else {
                 System.out.println("    No capabilities available");
             }

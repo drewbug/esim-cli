@@ -133,6 +133,15 @@ public final class ConnectivityManager {
         return getMtuMethod;
     }
 
+    private Method getNetworkSpecifierMethod;
+
+    private Method getGetNetworkSpecifierMethod() throws NoSuchMethodException, ClassNotFoundException {
+        if (getNetworkSpecifierMethod == null) {
+            getNetworkSpecifierMethod = getNetworkCapabilitiesClass().getMethod("getNetworkSpecifier");
+        }
+        return getNetworkSpecifierMethod;
+    }
+
     public Object[] getAllNetworks() {
         try {
             Method method = getGetAllNetworksMethod();
@@ -264,6 +273,19 @@ public final class ConnectivityManager {
         } catch (ReflectiveOperationException e) {
             Ln.e("Could not invoke getMtu method", e);
             return 0;
+        }
+    }
+
+    public Object getNetworkSpecifier(Object networkCapabilities) {
+        try {
+            if (networkCapabilities == null) {
+                return null;
+            }
+            Method method = getGetNetworkSpecifierMethod();
+            return method.invoke(networkCapabilities);
+        } catch (ReflectiveOperationException e) {
+            Ln.e("Could not invoke getNetworkSpecifier method", e);
+            return null;
         }
     }
 
