@@ -179,8 +179,7 @@ public class ShellMain {
                     
                     // Get and display phone number if available
                     if (telephonyManager != null) {
-                        String phoneNumber = telephonyManager.getLine1NumberForSubscriber(
-                            sub.getSubscriptionId(), CALLING_PACKAGE);
+                        String phoneNumber = getPhoneNumberForSubscription(telephonyManager, sub.getSubscriptionId());
                         if (phoneNumber != null && !phoneNumber.isEmpty() && !phoneNumber.equals("???????")) {
                             System.out.printf("    Phone Number: %s%n", phoneNumber);
                         } else {
@@ -195,7 +194,15 @@ public class ShellMain {
                         if (networks != null && !networks.isEmpty()) {
                             System.out.println("    Network Connections:");
                             for (NetworkInfo netInfo : networks) {
-                                System.out.printf("      • %s: %s%n", netInfo.type, netInfo.interface_);
+                                // Extract transport info from network type
+                                String[] parts = netInfo.type.split(" \\[");
+                                String networkType = parts[0];
+                                String transport = parts.length > 1 ? parts[1].replace("]", "") : "";
+                                
+                                System.out.printf("      • %s: %s%n", networkType, netInfo.interface_);
+                                if (!transport.isEmpty()) {
+                                    System.out.printf("        - Transport: %s%n", transport);
+                                }
                                 if (netInfo.ipAddresses != null && !netInfo.ipAddresses.isEmpty()) {
                                     for (String ip : netInfo.ipAddresses) {
                                         System.out.printf("        - %s%n", ip);
@@ -442,6 +449,67 @@ public class ShellMain {
         }
         
         return transports.isEmpty() ? "UNKNOWN" : String.join("+", transports);
+    }
+
+    private static String getPhoneNumberForSubscription(TelephonyManager telephonyManager, int subId) {
+        // Method 1: Try direct SIM card number
+        String phoneNumber = telephonyManager.getLine1NumberForSubscriber(subId, CALLING_PACKAGE);
+        if (isValidPhoneNumber(phoneNumber)) {
+            return normalizePhoneNumber(phoneNumber);
+        }
+        
+        // Method 2: Try SubscriptionManager phone number
+        phoneNumber = telephonyManager.getPhoneNumberFromSubscriptionManager(subId);
+        if (isValidPhoneNumber(phoneNumber)) {
+            return normalizePhoneNumber(phoneNumber);
+        }
+        
+        // Method 3: Try subscription property "number"
+        phoneNumber = telephonyManager.getSubscriptionProperty(subId, "number");
+        if (isValidPhoneNumber(phoneNumber)) {
+            return normalizePhoneNumber(phoneNumber);
+        }
+        
+        // Method 4: Try subscription property "phone_number"
+        phoneNumber = telephonyManager.getSubscriptionProperty(subId, "phone_number");
+        if (isValidPhoneNumber(phoneNumber)) {
+            return normalizePhoneNumber(phoneNumber);
+        }
+        
+        return null;
+    }
+    
+    private static String normalizePhoneNumber(String phoneNumber) {
+        if (phoneNumber == null || phoneNumber.isEmpty()) {
+            return phoneNumber;
+        }
+        
+        // Remove any whitespace and special characters except + and digits
+        String cleaned = phoneNumber.replaceAll("[^+\\d]", "");
+        
+        // If it already starts with +, return as is
+        if (cleaned.startsWith("+")) {
+            return cleaned;
+        }
+        
+        // For US/Canada numbers, add +1 if it's a 10 or 11 digit number
+        if (cleaned.length() == 10) {
+            return "+1" + cleaned;
+        } else if (cleaned.length() == 11 && cleaned.startsWith("1")) {
+            return "+" + cleaned;
+        }
+        
+        // For other formats, try to detect country code
+        // This is a basic implementation - could be enhanced
+        return "+" + cleaned;
+    }
+    
+    private static boolean isValidPhoneNumber(String phoneNumber) {
+        return phoneNumber != null && 
+               !phoneNumber.isEmpty() && 
+               !phoneNumber.equals("???????") &&
+               !phoneNumber.equals("") &&
+               !phoneNumber.equals("null");
     }
 
 

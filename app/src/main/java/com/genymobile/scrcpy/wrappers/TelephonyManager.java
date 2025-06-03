@@ -64,5 +64,42 @@ public final class TelephonyManager {
             }
         }
     }
+
+    public String getPhoneNumberFromSubscriptionManager(int subId) {
+        try {
+            IInterface subManager = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
+            if (subManager == null) return null;
+            
+            // Try newer getPhoneNumber method (API 33+)
+            try {
+                Method method = subManager.getClass().getMethod("getPhoneNumber", int.class, int.class, String.class, String.class);
+                return (String) method.invoke(subManager, subId, 1, FakeContext.get().getOpPackageName(), null);
+            } catch (NoSuchMethodException e) {
+                // Try older getPhoneNumber method
+                try {
+                    Method method = subManager.getClass().getMethod("getPhoneNumber", int.class);
+                    return (String) method.invoke(subManager, subId);
+                } catch (NoSuchMethodException e2) {
+                    return null;
+                }
+            }
+        } catch (Exception e) {
+            Ln.e("Could not get phone number from SubscriptionManager for subscription " + subId, e);
+            return null;
+        }
+    }
+
+    public String getSubscriptionProperty(int subId, String property) {
+        try {
+            IInterface subManager = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
+            if (subManager == null) return null;
+            
+            Method method = subManager.getClass().getMethod("getSubscriptionProperty", int.class, String.class, String.class);
+            return (String) method.invoke(subManager, subId, property, FakeContext.get().getOpPackageName());
+        } catch (Exception e) {
+            Ln.e("Could not get subscription property " + property + " for subscription " + subId, e);
+            return null;
+        }
+    }
 }
 
