@@ -47,5 +47,22 @@ public final class TelephonyManager {
             return null;
         }
     }
+
+    public String getLine1NumberForSubscriber(int subId, String callingPackage) {
+        try {
+            Method method = manager.getClass().getMethod("getLine1NumberForDisplay", 
+                int.class, String.class, String.class);
+            return (String) method.invoke(manager, subId, callingPackage, null);
+        } catch (ReflectiveOperationException e) {
+            try {
+                Method fallbackMethod = manager.getClass().getMethod("getLine1NumberForSubscriber", 
+                    int.class, String.class);
+                return (String) fallbackMethod.invoke(manager, subId, callingPackage);
+            } catch (ReflectiveOperationException e2) {
+                Ln.e("Could not get phone number for subscription " + subId, e2);
+                return null;
+            }
+        }
+    }
 }
 

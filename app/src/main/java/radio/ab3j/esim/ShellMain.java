@@ -3,6 +3,7 @@ package radio.ab3j.esim;
 import com.genymobile.scrcpy.wrappers.ServiceManager;
 import com.genymobile.scrcpy.wrappers.SubscriptionService;
 import com.genymobile.scrcpy.wrappers.ConnectivityManager;
+import com.genymobile.scrcpy.wrappers.TelephonyManager;
 import com.genymobile.scrcpy.Ln;
 import com.genymobile.scrcpy.FakeContext;
 
@@ -149,6 +150,9 @@ public class ShellMain {
             // Get telephony service for IMEI info
             IInterface telephony = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
             
+            // Get TelephonyManager for phone number retrieval
+            TelephonyManager telephonyManager = ServiceManager.getTelephonyManager();
+            
             // Display by slot
             for (int slot = 0; slot < 2; slot++) {
                 // Get IMEI for this slot
@@ -172,6 +176,17 @@ public class ShellMain {
                         System.out.printf("    IMEI: %s%n", imei);
                     }
                     System.out.printf("    ICCID: %s%n", sub.getIccId());
+                    
+                    // Get and display phone number if available
+                    if (telephonyManager != null) {
+                        String phoneNumber = telephonyManager.getLine1NumberForSubscriber(
+                            sub.getSubscriptionId(), CALLING_PACKAGE);
+                        if (phoneNumber != null && !phoneNumber.isEmpty() && !phoneNumber.equals("???????")) {
+                            System.out.printf("    Phone Number: %s%n", phoneNumber);
+                        } else {
+                            System.out.printf("    Phone Number: Not available%n");
+                        }
+                    }
                     
                     // Check if this subscription is active
                     if (isSubscriptionActive(sub.getSubscriptionId())) {
