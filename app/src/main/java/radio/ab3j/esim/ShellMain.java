@@ -13,7 +13,13 @@ import android.telephony.euicc.DownloadableSubscription;
 
 import java.io.*;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Scanner;
 
 public class ShellMain {
 
@@ -454,41 +460,6 @@ public class ShellMain {
         }
     }
     
-    private static Set<Integer> getActiveSubscriptionIds() {
-        Set<Integer> activeSubIds = new HashSet<>();
-        try {
-            SubscriptionService ss = ServiceManager.getSubscriptionService();
-            if (ss != null) {
-                List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
-                if (subs != null) {
-                    for (SubscriptionInfo sub : subs) {
-                        activeSubIds.add(sub.getSubscriptionId());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Ln.e("Error getting active subscription IDs", e);
-        }
-        return activeSubIds;
-    }
-    
-    private static Map<Integer, String> getSubIdToCarrierMap() {
-        Map<Integer, String> map = new HashMap<>();
-        try {
-            SubscriptionService ss = ServiceManager.getSubscriptionService();
-            if (ss != null) {
-                List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
-                if (subs != null) {
-                    for (SubscriptionInfo sub : subs) {
-                        map.put(sub.getSubscriptionId(), sub.getDisplayName().toString());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Ln.e("Error building carrier map", e);
-        }
-        return map;
-    }
     
     private static int parseSubIdFromSpecifier(String specifier) {
         // Parse "TelephonyNetworkSpecifier [mSubId = 3]" format
