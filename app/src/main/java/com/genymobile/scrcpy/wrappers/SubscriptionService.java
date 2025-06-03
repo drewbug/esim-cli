@@ -31,7 +31,7 @@ public final class SubscriptionService {
         if (getAvailableSubscriptionInfoListMethod == null) {
             try {
                 // Try with String parameter first (newer Android versions)
-                getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList", String.class);
+                getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList", String.class, String.class);
             } catch (NoSuchMethodException e) {
                 // Try without parameters (older Android versions)
                 getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList");
@@ -45,7 +45,7 @@ public final class SubscriptionService {
             Method method = getGetAvailableSubscriptionInfoListMethod();
             // Check if method takes parameters
             if (method.getParameterCount() > 0) {
-                return (List<SubscriptionInfo>) method.invoke(service, FakeContext.PACKAGE_NAME);
+                return (List<SubscriptionInfo>) method.invoke(service, FakeContext.PACKAGE_NAME, null);
             } else {
                 return (List<SubscriptionInfo>) method.invoke(service);
             }
