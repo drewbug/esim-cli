@@ -20,8 +20,34 @@ public class ShellMain {
     private static final String EUICC_SERVICE = "econtroller";
     private static final String EUICC_INTERFACE = "com.android.internal.telephony.euicc.IEuiccController";
     private static final String CALLING_PACKAGE = FakeContext.PACKAGE_NAME;
-
+    private static final String TELEPHONY_SERVICE = "phone";
+    private static final String TELEPHONY_INTERFACE = "com.android.internal.telephony.ITelephony";
+    private static final String SUBSCRIPTION_SERVICE = "isub";
+    private static final String SUBSCRIPTION_INTERFACE = "com.android.internal.telephony.ISub";
+    private static final String STATUS_SEPARATOR = "=" + "=".repeat(59);
+    private static final String UNAVAILABLE_PHONE = "Not available";
+    private static final String UNKNOWN_PLACEHOLDER = "???????"; 
+    
     private static final Scanner scanner = new Scanner(System.in);
+    
+    private static final class MenuOptions {
+        static final String ACTIVATE_EXISTING = "1";
+        static final String DOWNLOAD_NEW = "2";
+        static final String EXIT = "3";
+    }
+    
+    private static final class StatusEmojis {
+        static final String SUBSCRIPTIONS = "📶";
+        static final String TELEPHONY = "📡";
+        static final String VALIDATED = "✅";
+        static final String HOME = "🏠";
+        static final String ROAMING = "✈️";
+        static final String INACTIVE = "⭕";
+        static final String YES = "✅ YES";
+        static final String NO = "❌ NO";
+        static final String ERROR = "⚠️ ERROR";
+        static final String ACTIVE = "✅";
+    }
 
     public static void main(String[] args) {
         if (isRootAvailable() && !isRooted()) {
@@ -33,43 +59,60 @@ public class ShellMain {
             }
         }
 
-        // Print separator at the beginning
-        System.out.println("\n" + "=".repeat(60));
-
+        System.out.println("\n" + STATUS_SEPARATOR);
+        
+        displaySystemStatus();
+        
+        System.out.println("\n" + STATUS_SEPARATOR + "\n");
+        
+        runInteractiveMenu();
+    }
+    
+    private static void displaySystemStatus() {
         try {
             printActiveSubscriptionsAndNetworks();
             printTelephonyStates();
         } catch (Exception e) {
-            Ln.e("Error initializing ShellMain", e);
+            Ln.e("Error displaying system status", e);
         }
-
-        // Print separator between status report and CLI menu
-        System.out.println("\n" + "=".repeat(60) + "\n");
-
+    }
+    
+    private static void runInteractiveMenu() {
         while (true) {
-            System.out.println("1. Activate an existing eSIM profile");
-            System.out.println("2. Download a new eSIM profile");
-            System.out.println("3. Exit");
-            System.out.print("\nChoose an option: ");
-
+            displayMenuOptions();
             String choice = scanner.nextLine().trim();
+            
             try {
-                switch (choice) {
-                    case "1":
-                        activateExistingProfile();
-                        break;
-                    case "2":
-                        activateNewProfile();
-                        break;
-                    case "3":
-                        System.out.println("Exiting...");
-                        return;
-                    default:
-                        System.out.println("Invalid choice, try again.\n");
+                if (handleMenuChoice(choice)) {
+                    break;
                 }
             } catch (Exception e) {
-                Ln.e("Error in main loop", e);
+                Ln.e("Error in menu operation", e);
             }
+        }
+    }
+    
+    private static void displayMenuOptions() {
+        System.out.println("1. Activate an existing eSIM profile");
+        System.out.println("2. Download a new eSIM profile");
+        System.out.println("3. Exit");
+        System.out.print("\nChoose an option: ");
+    }
+    
+    private static boolean handleMenuChoice(String choice) {
+        switch (choice) {
+            case MenuOptions.ACTIVATE_EXISTING:
+                activateExistingProfile();
+                return false;
+            case MenuOptions.DOWNLOAD_NEW:
+                activateNewProfile();
+                return false;
+            case MenuOptions.EXIT:
+                System.out.println("Exiting...");
+                return true;
+            default:
+                System.out.println("Invalid choice, try again.\n");
+                return false;
         }
     }
 
@@ -113,114 +156,170 @@ public class ShellMain {
     }
 
     private static void printActiveSubscriptionsAndNetworks() {
+        SubscriptionDisplayContext context = createSubscriptionDisplayContext();
+        if (context == null) {
+            return;
+        }
+        
+        System.out.println("\n" + StatusEmojis.SUBSCRIPTIONS + " Active Subscriptions:");
+        
+        Map<Integer, List<SubscriptionInfo>> slotToSubs = groupSubscriptionsBySlot(context.availableSubscriptions);
+        Map<Integer, List<NetworkInfo>> subIdToNetworks = buildSubscriptionNetworkMap(context.connectivityManager);
+        
+        for (int slot = 0; slot < 2; slot++) {
+            displaySlotInformation(slot, slotToSubs, subIdToNetworks, context);
+        }
+    }
+    
+    private static class SubscriptionDisplayContext {
+        final SubscriptionService subscriptionService;
+        final List<SubscriptionInfo> availableSubscriptions;
+        final ConnectivityManager connectivityManager;
+        final IInterface telephonyService;
+        final TelephonyManager telephonyManager;
+        
+        SubscriptionDisplayContext(SubscriptionService ss, List<SubscriptionInfo> subs, 
+                                 ConnectivityManager cm, IInterface tel, TelephonyManager tm) {
+            this.subscriptionService = ss;
+            this.availableSubscriptions = subs;
+            this.connectivityManager = cm;
+            this.telephonyService = tel;
+            this.telephonyManager = tm;
+        }
+    }
+    
+    private static SubscriptionDisplayContext createSubscriptionDisplayContext() {
         try {
-            // Get subscription service
-            SubscriptionService ss = ServiceManager.getSubscriptionService();
-            if (ss == null) {
-                System.out.println("\n📶 Active Subscriptions: Service unavailable");
-                return;
+            SubscriptionService subscriptionService = ServiceManager.getSubscriptionService();
+            if (subscriptionService == null) {
+                System.out.println("\n" + StatusEmojis.SUBSCRIPTIONS + " Active Subscriptions: Service unavailable");
+                return null;
             }
             
-            // Get available subscriptions
-            List<SubscriptionInfo> availableSubs = ss.getAvailableSubscriptionInfoList();
-            if (availableSubs == null || availableSubs.isEmpty()) {
-                System.out.println("\n📶 Active Subscriptions: No subscriptions found");
-                return;
+            List<SubscriptionInfo> availableSubscriptions = subscriptionService.getAvailableSubscriptionInfoList();
+            if (availableSubscriptions == null || availableSubscriptions.isEmpty()) {
+                System.out.println("\n" + StatusEmojis.SUBSCRIPTIONS + " Active Subscriptions: No subscriptions found");
+                return null;
             }
             
-            // Get connectivity manager for network info
             ConnectivityManager connectivityManager = ServiceManager.getConnectivityManager();
             if (connectivityManager == null) {
-                System.out.println("\n📶 Active Subscriptions: Network service unavailable");
-                return;
+                System.out.println("\n" + StatusEmojis.SUBSCRIPTIONS + " Active Subscriptions: Network service unavailable");
+                return null;
             }
             
-            // Build a map of subId to networks
-            Map<Integer, List<NetworkInfo>> subIdToNetworks = buildSubscriptionNetworkMap(connectivityManager);
-            
-            System.out.println("\n📶 Active Subscriptions:");
-            
-            // Group subscriptions by slot
-            Map<Integer, List<SubscriptionInfo>> slotToSubs = new HashMap<>();
-            for (SubscriptionInfo sub : availableSubs) {
-                int slot = sub.getSimSlotIndex();
-                slotToSubs.computeIfAbsent(slot, k -> new ArrayList<>()).add(sub);
-            }
-            
-            // Get telephony service for IMEI info
-            IInterface telephony = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
-            
-            // Get TelephonyManager for phone number retrieval
+            IInterface telephonyService = ServiceManager.getService(TELEPHONY_SERVICE, TELEPHONY_INTERFACE);
             TelephonyManager telephonyManager = ServiceManager.getTelephonyManager();
             
-            // Display by slot
-            for (int slot = 0; slot < 2; slot++) {
-                // Get IMEI for this slot
-                String imei = null;
-                if (telephony != null) {
-                    imei = invokeTelephonyStringMethod(telephony, "getImeiForSlot", slot, CALLING_PACKAGE);
-                }
-                
-                List<SubscriptionInfo> slotSubs = slotToSubs.get(slot);
-                if (slotSubs == null || slotSubs.isEmpty()) {
-                    System.out.printf("\n  Slot %d:%n", slot);
-                    if (imei != null && !imei.isEmpty()) {
-                        System.out.printf("    IMEI: %s%n", imei);
-                    }
-                    continue;
-                }
-                
-                for (SubscriptionInfo sub : slotSubs) {
-                    System.out.printf("\n  Slot %d: %s%n", slot, sub.getDisplayName());
-                    if (imei != null && !imei.isEmpty()) {
-                        System.out.printf("    IMEI: %s%n", imei);
-                    }
-                    System.out.printf("    ICCID: %s%n", sub.getIccId());
-                    
-                    // Get and display phone number if available
-                    if (telephonyManager != null) {
-                        String phoneNumber = getPhoneNumberForSubscription(telephonyManager, sub.getSubscriptionId());
-                        if (phoneNumber != null && !phoneNumber.isEmpty() && !phoneNumber.equals("???????")) {
-                            System.out.printf("    Phone Number: %s%n", phoneNumber);
-                        } else {
-                            System.out.printf("    Phone Number: Not available%n");
-                        }
-                    }
-                    
-                    // Check if this subscription is active
-                    if (isSubscriptionActive(sub.getSubscriptionId())) {
-                        // Show associated networks
-                        List<NetworkInfo> networks = subIdToNetworks.get(sub.getSubscriptionId());
-                        if (networks != null && !networks.isEmpty()) {
-                            System.out.println("    Network Connections:");
-                            for (NetworkInfo netInfo : networks) {
-                                // Extract transport info from network type
-                                String[] parts = netInfo.type.split(" \\[");
-                                String networkType = parts[0];
-                                String transport = parts.length > 1 ? parts[1].replace("]", "") : "";
-                                
-                                System.out.printf("      • %s: %s%n", networkType, netInfo.interface_);
-                                if (!transport.isEmpty()) {
-                                    System.out.printf("        - Transport: %s%n", transport);
-                                }
-                                if (netInfo.ipAddresses != null && !netInfo.ipAddresses.isEmpty()) {
-                                    for (String ip : netInfo.ipAddresses) {
-                                        System.out.printf("        - %s%n", ip);
-                                    }
-                                }
-                            }
-                        } else {
-                            System.out.println("    Network Connections: None active");
-                        }
-                    } else {
-                        System.out.println("    Status: ⭕ Inactive");
-                    }
-                }
-            }
-            
+            return new SubscriptionDisplayContext(subscriptionService, availableSubscriptions, 
+                                                connectivityManager, telephonyService, telephonyManager);
         } catch (Exception e) {
-            System.out.println("\n📶 Active Subscriptions: Error accessing service");
-            Ln.e("Error in printActiveSubscriptionsAndNetworks", e);
+            System.out.println("\n" + StatusEmojis.SUBSCRIPTIONS + " Active Subscriptions: Error accessing service");
+            Ln.e("Error creating subscription display context", e);
+            return null;
+        }
+    }
+    
+    private static Map<Integer, List<SubscriptionInfo>> groupSubscriptionsBySlot(List<SubscriptionInfo> subscriptions) {
+        Map<Integer, List<SubscriptionInfo>> slotToSubs = new HashMap<>();
+        for (SubscriptionInfo subscription : subscriptions) {
+            int slot = subscription.getSimSlotIndex();
+            slotToSubs.computeIfAbsent(slot, k -> new ArrayList<>()).add(subscription);
+        }
+        return slotToSubs;
+    }
+    
+    private static void displaySlotInformation(int slot, Map<Integer, List<SubscriptionInfo>> slotToSubs, 
+                                             Map<Integer, List<NetworkInfo>> subIdToNetworks, 
+                                             SubscriptionDisplayContext context) {
+        String slotImei = getImeiForSlot(context.telephonyService, slot);
+        List<SubscriptionInfo> slotSubscriptions = slotToSubs.get(slot);
+        
+        if (slotSubscriptions == null || slotSubscriptions.isEmpty()) {
+            displayEmptySlot(slot, slotImei);
+            return;
+        }
+        
+        for (SubscriptionInfo subscription : slotSubscriptions) {
+            displaySubscriptionDetails(slot, subscription, slotImei, subIdToNetworks, context);
+        }
+    }
+    
+    private static void displayEmptySlot(int slot, String imei) {
+        System.out.printf("\n  Slot %d:%n", slot);
+        if (imei != null && !imei.isEmpty()) {
+            System.out.printf("    IMEI: %s%n", imei);
+        }
+    }
+    
+    private static void displaySubscriptionDetails(int slot, SubscriptionInfo subscription, String imei, 
+                                                  Map<Integer, List<NetworkInfo>> subIdToNetworks, 
+                                                  SubscriptionDisplayContext context) {
+        System.out.printf("\n  Slot %d: %s%n", slot, subscription.getDisplayName());
+        
+        if (imei != null && !imei.isEmpty()) {
+            System.out.printf("    IMEI: %s%n", imei);
+        }
+        
+        System.out.printf("    ICCID: %s%n", subscription.getIccId());
+        
+        displayPhoneNumber(subscription, context.telephonyManager);
+        displayNetworkStatus(subscription, subIdToNetworks);
+    }
+    
+    private static String getImeiForSlot(IInterface telephonyService, int slot) {
+        if (telephonyService != null) {
+            return invokeTelephonyStringMethod(telephonyService, "getImeiForSlot", slot, CALLING_PACKAGE);
+        }
+        return null;
+    }
+    
+    private static void displayPhoneNumber(SubscriptionInfo subscription, TelephonyManager telephonyManager) {
+        if (telephonyManager != null) {
+            String phoneNumber = getPhoneNumberForSubscription(telephonyManager, subscription.getSubscriptionId());
+            if (phoneNumber != null && !phoneNumber.isEmpty() && !phoneNumber.equals(UNKNOWN_PLACEHOLDER)) {
+                System.out.printf("    Phone Number: %s%n", phoneNumber);
+            } else {
+                System.out.printf("    Phone Number: %s%n", UNAVAILABLE_PHONE);
+            }
+        }
+    }
+    
+    private static void displayNetworkStatus(SubscriptionInfo subscription, Map<Integer, List<NetworkInfo>> subIdToNetworks) {
+        if (isSubscriptionActive(subscription.getSubscriptionId())) {
+            displayActiveNetworks(subscription.getSubscriptionId(), subIdToNetworks);
+        } else {
+            System.out.println("    Status: " + StatusEmojis.INACTIVE + " Inactive");
+        }
+    }
+    
+    private static void displayActiveNetworks(int subscriptionId, Map<Integer, List<NetworkInfo>> subIdToNetworks) {
+        List<NetworkInfo> networks = subIdToNetworks.get(subscriptionId);
+        if (networks != null && !networks.isEmpty()) {
+            System.out.println("    Network Connections:");
+            for (NetworkInfo networkInfo : networks) {
+                displayNetworkDetails(networkInfo);
+            }
+        } else {
+            System.out.println("    Network Connections: None active");
+        }
+    }
+    
+    private static void displayNetworkDetails(NetworkInfo networkInfo) {
+        String[] typeParts = networkInfo.type.split(" \\[");
+        String networkType = typeParts[0];
+        String transport = typeParts.length > 1 ? typeParts[1].replace("]", "") : "";
+        
+        System.out.printf("      • %s: %s%n", networkType, networkInfo.interface_);
+        
+        if (!transport.isEmpty()) {
+            System.out.printf("        - Transport: %s%n", transport);
+        }
+        
+        if (networkInfo.ipAddresses != null && !networkInfo.ipAddresses.isEmpty()) {
+            for (String ipAddress : networkInfo.ipAddresses) {
+                System.out.printf("        - %s%n", ipAddress);
+            }
         }
     }
     
@@ -315,33 +414,43 @@ public class ShellMain {
         return map;
     }
     
-    private static boolean isSubscriptionActive(int subId) {
+    private static boolean isSubscriptionActive(int subscriptionId) {
         try {
-            IInterface subService = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
-            if (subService == null) return false;
-            
-            FakeContext mContext = FakeContext.get();
-            
-            // Try to get active subscription info
-            Method getActiveSubscriptionInfoMethod = null;
-            try {
-                getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", 
-                    int.class, String.class, String.class);
-                Object result = getActiveSubscriptionInfoMethod.invoke(subService, subId, 
-                    mContext.getOpPackageName(), null);
-                return result != null;
-            } catch (NoSuchMethodException e) {
-                try {
-                    getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", int.class);
-                    Object result = getActiveSubscriptionInfoMethod.invoke(subService, subId);
-                    return result != null;
-                } catch (Exception e2) {
-                    // Can't determine active status
-                    return true; // Assume active if we can't check
-                }
+            IInterface subscriptionService = ServiceManager.getService(SUBSCRIPTION_SERVICE, SUBSCRIPTION_INTERFACE);
+            if (subscriptionService == null) {
+                return false;
             }
+            
+            return checkSubscriptionActiveStatus(subscriptionService, subscriptionId);
         } catch (Exception e) {
-            return true; // Assume active if error
+            return true; 
+        }
+    }
+    
+    private static boolean checkSubscriptionActiveStatus(IInterface subscriptionService, int subscriptionId) {
+        FakeContext context = FakeContext.get();
+        
+        try {
+            Method getActiveSubscriptionInfoMethod = subscriptionService.getClass().getMethod(
+                "getActiveSubscriptionInfo", int.class, String.class, String.class);
+            Object result = getActiveSubscriptionInfoMethod.invoke(subscriptionService, subscriptionId, 
+                context.getOpPackageName(), null);
+            return result != null;
+        } catch (NoSuchMethodException e) {
+            return checkSubscriptionActiveStatusFallback(subscriptionService, subscriptionId);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+    
+    private static boolean checkSubscriptionActiveStatusFallback(IInterface subscriptionService, int subscriptionId) {
+        try {
+            Method getActiveSubscriptionInfoMethod = subscriptionService.getClass().getMethod(
+                "getActiveSubscriptionInfo", int.class);
+            Object result = getActiveSubscriptionInfoMethod.invoke(subscriptionService, subscriptionId);
+            return result != null;
+        } catch (Exception e) {
+            return true;
         }
     }
     
@@ -516,55 +625,64 @@ public class ShellMain {
 
 
     private static void printTelephonyStates() {
-        IInterface telephony = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
+        IInterface telephony = ServiceManager.getService(TELEPHONY_SERVICE, TELEPHONY_INTERFACE);
         if (telephony == null) {
             Ln.e("ITelephony unavailable");
             return;
         }
 
-        int subId = getActiveSubscriptionId();
-        System.out.println("\n📡 Telephony Status:\n");
-
-        Map<String, Object[]> methods = new LinkedHashMap<>();
-        methods.put("isConcurrentVoiceAndDataAllowed", new Object[]{subId});
-        methods.put("isDataConnectivityPossible", new Object[]{subId});
-        methods.put("isDataEnabled", new Object[]{subId});
-        methods.put("isHearingAidCompatibilitySupported", new Object[]{});
-        methods.put("isIdle", new Object[]{CALLING_PACKAGE});
-        methods.put("isIdleForSubscriber", new Object[]{subId, CALLING_PACKAGE});
-        methods.put("isImsRegistered", new Object[]{subId});
-        methods.put("isOffhook", new Object[]{CALLING_PACKAGE});
-        methods.put("isOffhookForSubscriber", new Object[]{subId, CALLING_PACKAGE});
-        methods.put("isRadioOn", new Object[]{CALLING_PACKAGE});
-        methods.put("isRadioOnForSubscriber", new Object[]{subId, CALLING_PACKAGE});
-        methods.put("isRinging", new Object[]{CALLING_PACKAGE});
-        methods.put("isRingingForSubscriber", new Object[]{subId, CALLING_PACKAGE});
-        methods.put("isTtyModeSupported", new Object[]{});
-        methods.put("isUserDataEnabled", new Object[]{subId});
-        methods.put("isVideoCallingEnabled", new Object[]{CALLING_PACKAGE});
-        methods.put("isVideoTelephonyAvailable", new Object[]{subId});
-        methods.put("isVolteAvailable", new Object[]{subId});
-        methods.put("isWifiCallingAvailable", new Object[]{subId});
-        methods.put("isWorldPhone", new Object[]{});
-
-        for (String method : methods.keySet()) {
-            printBoolMethod(telephony, method, methods.get(method));
+        int activeSubscriptionId = getActiveSubscriptionId();
+        System.out.println("\n" + StatusEmojis.TELEPHONY + " Telephony Status:\n");
+        
+        displayTelephonyCapabilities(telephony, activeSubscriptionId);
+    }
+    
+    private static void displayTelephonyCapabilities(IInterface telephony, int subscriptionId) {
+        Map<String, Object[]> capabilityMethods = createTelephonyCapabilityMethods(subscriptionId);
+        
+        for (Map.Entry<String, Object[]> methodEntry : capabilityMethods.entrySet()) {
+            displayTelephonyCapability(telephony, methodEntry.getKey(), methodEntry.getValue());
         }
     }
+    
+    private static Map<String, Object[]> createTelephonyCapabilityMethods(int subscriptionId) {
+        Map<String, Object[]> methods = new LinkedHashMap<>();
+        methods.put("isConcurrentVoiceAndDataAllowed", new Object[]{subscriptionId});
+        methods.put("isDataConnectivityPossible", new Object[]{subscriptionId});
+        methods.put("isDataEnabled", new Object[]{subscriptionId});
+        methods.put("isHearingAidCompatibilitySupported", new Object[]{});
+        methods.put("isIdle", new Object[]{CALLING_PACKAGE});
+        methods.put("isIdleForSubscriber", new Object[]{subscriptionId, CALLING_PACKAGE});
+        methods.put("isImsRegistered", new Object[]{subscriptionId});
+        methods.put("isOffhook", new Object[]{CALLING_PACKAGE});
+        methods.put("isOffhookForSubscriber", new Object[]{subscriptionId, CALLING_PACKAGE});
+        methods.put("isRadioOn", new Object[]{CALLING_PACKAGE});
+        methods.put("isRadioOnForSubscriber", new Object[]{subscriptionId, CALLING_PACKAGE});
+        methods.put("isRinging", new Object[]{CALLING_PACKAGE});
+        methods.put("isRingingForSubscriber", new Object[]{subscriptionId, CALLING_PACKAGE});
+        methods.put("isTtyModeSupported", new Object[]{});
+        methods.put("isUserDataEnabled", new Object[]{subscriptionId});
+        methods.put("isVideoCallingEnabled", new Object[]{CALLING_PACKAGE});
+        methods.put("isVideoTelephonyAvailable", new Object[]{subscriptionId});
+        methods.put("isVolteAvailable", new Object[]{subscriptionId});
+        methods.put("isWifiCallingAvailable", new Object[]{subscriptionId});
+        methods.put("isWorldPhone", new Object[]{});
+        return methods;
+    }
 
-    private static void printBoolMethod(IInterface srv, String method, Object... args) {
+    private static void displayTelephonyCapability(IInterface service, String methodName, Object... arguments) {
         try {
-            Class<?>[] types = Arrays.stream(args)
-                    .map(a -> a instanceof Integer ? int.class : String.class)
+            Class<?>[] parameterTypes = Arrays.stream(arguments)
+                    .map(arg -> arg instanceof Integer ? int.class : String.class)
                     .toArray(Class[]::new);
-            Method m = srv.getClass().getMethod(method, types);
-            boolean res = (boolean) m.invoke(srv, args);
-            System.out.printf("  - %s: %s%n", method, res ? "✅ YES" : "❌ NO");
+            Method method = service.getClass().getMethod(methodName, parameterTypes);
+            boolean result = (boolean) method.invoke(service, arguments);
+            System.out.printf("  - %s: %s%n", methodName, result ? StatusEmojis.YES : StatusEmojis.NO);
         } catch (NoSuchMethodException e) {
             // Method doesn't exist on this device, skip silently
         } catch (Exception e) {
-            Ln.e("Reflection error: " + method, e);
-            System.out.printf("  - %s: ⚠️ ERROR%n", method);
+            Ln.e("Reflection error: " + methodName, e);
+            System.out.printf("  - %s: %s%n", methodName, StatusEmojis.ERROR);
         }
     }
 
@@ -604,9 +722,9 @@ public class ShellMain {
 
     private static int getActiveSubscriptionId() {
         try {
-            IInterface subService = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
-            Method m = subService.getClass().getMethod("getDefaultSubId");
-            return (int) m.invoke(subService);
+            IInterface subscriptionService = ServiceManager.getService(SUBSCRIPTION_SERVICE, SUBSCRIPTION_INTERFACE);
+            Method getDefaultSubIdMethod = subscriptionService.getClass().getMethod("getDefaultSubId");
+            return (int) getDefaultSubIdMethod.invoke(subscriptionService);
         } catch (Exception e) {
             Ln.e("Active subscription ID error", e);
             return -1;
@@ -614,102 +732,165 @@ public class ShellMain {
     }
 
     private static void activateNewProfile() {
+        String activationCode = promptForActivationCode();
+        if (activationCode == null) {
+            return;
+        }
+        
         try {
-            System.out.print("Enter eSIM activation code (LPA format): ");
-            String activationCode = scanner.nextLine().trim();
-
-            if (activationCode.isEmpty()) {
-                Ln.e("Activation code was empty!");
-                return;
-            }
-
+            EuiccOperationResult result = downloadAndActivateProfile(activationCode);
+            handleProfileActivationResult(result, "new profile");
+        } catch (Exception e) {
+            Ln.e("Error activating new profile", e);
+        }
+    }
+    
+    private static String promptForActivationCode() {
+        System.out.print("Enter eSIM activation code (LPA format): ");
+        String activationCode = scanner.nextLine().trim();
+        
+        if (activationCode.isEmpty()) {
+            Ln.e("Activation code was empty!");
+            return null;
+        }
+        
+        return activationCode;
+    }
+    
+    private static class EuiccOperationResult {
+        final boolean success;
+        final String errorMessage;
+        
+        EuiccOperationResult(boolean success, String errorMessage) {
+            this.success = success;
+            this.errorMessage = errorMessage;
+        }
+        
+        static EuiccOperationResult success() {
+            return new EuiccOperationResult(true, null);
+        }
+        
+        static EuiccOperationResult failure(String errorMessage) {
+            return new EuiccOperationResult(false, errorMessage);
+        }
+    }
+    
+    private static EuiccOperationResult downloadAndActivateProfile(String activationCode) {
+        try {
             IInterface euiccController = ServiceManager.getService(EUICC_SERVICE, EUICC_INTERFACE);
             if (euiccController == null) {
-                Ln.e("Could not get IEuiccController service");
-                return;
+                return EuiccOperationResult.failure("Could not get IEuiccController service");
             }
-
+            
             DownloadableSubscription subscription = DownloadableSubscription.forActivationCode(activationCode);
-
-            Method downloadSubscription = euiccController.getClass().getMethod(
+            
+            Method downloadSubscriptionMethod = euiccController.getClass().getMethod(
                 "downloadSubscription",
                 DownloadableSubscription.class, boolean.class,
                 String.class, android.app.PendingIntent.class
             );
-
+            
             Ln.i("Activating new eSIM profile...");
-            downloadSubscription.invoke(euiccController,
-                    subscription,
-                    true,
-                    CALLING_PACKAGE,
-                    null
-            );
-
-            Ln.i("Requested eSIM profile activation (new profile). Check device.");
-
+            downloadSubscriptionMethod.invoke(euiccController, subscription, true, CALLING_PACKAGE, null);
+            
+            return EuiccOperationResult.success();
         } catch (Exception e) {
-            Ln.e("Error activating new profile", e);
+            return EuiccOperationResult.failure(e.getMessage());
+        }
+    }
+    
+    private static void handleProfileActivationResult(EuiccOperationResult result, String profileType) {
+        if (result.success) {
+            Ln.i("Requested eSIM profile activation (" + profileType + "). Check device.");
+        } else {
+            Ln.e("Failed to activate " + profileType + ": " + result.errorMessage);
         }
     }
 
     private static void activateExistingProfile() {
         try {
-            SubscriptionService subscriptionService = ServiceManager.getSubscriptionService();
-            List<SubscriptionInfo> subscriptions = subscriptionService.getAvailableSubscriptionInfoList();
-
-            if (subscriptions == null || subscriptions.isEmpty()) {
-                System.out.println("No existing eSIM profiles found.");
+            List<SubscriptionInfo> availableProfiles = getAvailableProfiles();
+            if (availableProfiles == null) {
                 return;
             }
-
-            int activeSubId = getActiveSubscriptionId();
-
-            System.out.println("\n📑 Existing eSIM profiles:");
-            int index = 1;
-            for (SubscriptionInfo sub : subscriptions) {
-                boolean isActive = sub.getSubscriptionId() == activeSubId;
-                System.out.printf("%d. %s (ICCID: %s)%s%n",
-                        index++,
-                        sub.getDisplayName(),
-                        sub.getIccId(),
-                        isActive ? " [ACTIVE ✅]" : ""
-                );
-            }
-
-            System.out.print("\nSelect profile number to activate: ");
-            int choice = Integer.parseInt(scanner.nextLine().trim());
-
-            if (choice < 1 || choice > subscriptions.size()) {
-                System.out.println("Invalid selection.");
+            
+            displayAvailableProfiles(availableProfiles);
+            
+            Integer selectedProfileId = promptForProfileSelection(availableProfiles);
+            if (selectedProfileId == null) {
                 return;
             }
-
-            int subscriptionId = subscriptions.get(choice - 1).getSubscriptionId();
-
-            IInterface euiccController = ServiceManager.getService(EUICC_SERVICE, EUICC_INTERFACE);
-            if (euiccController == null) {
-                Ln.e("Could not get IEuiccController service");
-                return;
-            }
-
-            Method switchToSubscription = euiccController.getClass().getMethod(
-                "switchToSubscription",
-                int.class, String.class, android.app.PendingIntent.class
-            );
-
-            Ln.i("Activating existing eSIM profile...");
-            switchToSubscription.invoke(euiccController,
-                    subscriptionId,
-                    CALLING_PACKAGE,
-                    null
-            );
-
-            Ln.i("Requested activation for existing eSIM profile. Check device.");
+            
+            EuiccOperationResult result = switchToExistingProfile(selectedProfileId);
+            handleProfileActivationResult(result, "existing profile");
 
         } catch (NumberFormatException e) {
             Ln.e("Invalid number format", e);
         } catch (Exception e) {
             Ln.e("Error activating existing profile", e);
+        }
+    }
+    
+    private static List<SubscriptionInfo> getAvailableProfiles() {
+        SubscriptionService subscriptionService = ServiceManager.getSubscriptionService();
+        List<SubscriptionInfo> subscriptions = subscriptionService.getAvailableSubscriptionInfoList();
+        
+        if (subscriptions == null || subscriptions.isEmpty()) {
+            System.out.println("No existing eSIM profiles found.");
+            return null;
+        }
+        
+        return subscriptions;
+    }
+    
+    private static void displayAvailableProfiles(List<SubscriptionInfo> subscriptions) {
+        int activeSubscriptionId = getActiveSubscriptionId();
+        
+        System.out.println("\n📑 Existing eSIM profiles:");
+        
+        for (int index = 0; index < subscriptions.size(); index++) {
+            SubscriptionInfo subscription = subscriptions.get(index);
+            boolean isActive = subscription.getSubscriptionId() == activeSubscriptionId;
+            
+            System.out.printf("%d. %s (ICCID: %s)%s%n",
+                    index + 1,
+                    subscription.getDisplayName(),
+                    subscription.getIccId(),
+                    isActive ? " [ACTIVE " + StatusEmojis.ACTIVE + "]" : ""
+            );
+        }
+    }
+    
+    private static Integer promptForProfileSelection(List<SubscriptionInfo> subscriptions) {
+        System.out.print("\nSelect profile number to activate: ");
+        int choice = Integer.parseInt(scanner.nextLine().trim());
+        
+        if (choice < 1 || choice > subscriptions.size()) {
+            System.out.println("Invalid selection.");
+            return null;
+        }
+        
+        return subscriptions.get(choice - 1).getSubscriptionId();
+    }
+    
+    private static EuiccOperationResult switchToExistingProfile(int subscriptionId) {
+        try {
+            IInterface euiccController = ServiceManager.getService(EUICC_SERVICE, EUICC_INTERFACE);
+            if (euiccController == null) {
+                return EuiccOperationResult.failure("Could not get IEuiccController service");
+            }
+            
+            Method switchToSubscriptionMethod = euiccController.getClass().getMethod(
+                "switchToSubscription",
+                int.class, String.class, android.app.PendingIntent.class
+            );
+            
+            Ln.i("Activating existing eSIM profile...");
+            switchToSubscriptionMethod.invoke(euiccController, subscriptionId, CALLING_PACKAGE, null);
+            
+            return EuiccOperationResult.success();
+        } catch (Exception e) {
+            return EuiccOperationResult.failure(e.getMessage());
         }
     }
 }
