@@ -2,6 +2,7 @@ package radio.ab3j.esim;
 
 import com.genymobile.scrcpy.wrappers.ServiceManager;
 import com.genymobile.scrcpy.wrappers.SubscriptionService;
+import com.genymobile.scrcpy.wrappers.ConnectivityManager;
 import com.genymobile.scrcpy.Ln;
 import com.genymobile.scrcpy.FakeContext;
 
@@ -32,6 +33,7 @@ public class ShellMain {
         }
 
         try {
+            printNetworkInfo();
             printDeviceImeis();
             printActiveSubscription();
             printTelephonyStates();
@@ -103,6 +105,92 @@ public class ShellMain {
             p.waitFor();
         } catch (Exception e) {
             Ln.e("Failed relaunching as root", e);
+        }
+    }
+
+    private static void printNetworkInfo() {
+        ConnectivityManager connectivityManager = ServiceManager.getConnectivityManager();
+        if (connectivityManager == null) {
+            Ln.e("ConnectivityManager unavailable");
+            return;
+        }
+
+        System.out.println("\n🌐 Network Information:");
+        Object[] networks = connectivityManager.getAllNetworks();
+        
+        if (networks == null || networks.length == 0) {
+            System.out.println("  No networks available");
+            return;
+        }
+
+        for (int i = 0; i < networks.length; i++) {
+            Object network = networks[i];
+            System.out.printf("\n  Network %d:%n", i + 1);
+            
+            Object capabilities = connectivityManager.getNetworkCapabilities(network);
+            if (capabilities != null) {
+                System.out.println("    Transports:");
+                for (int transport = 0; transport <= ConnectivityManager.TRANSPORT_SATELLITE; transport++) {
+                    if (connectivityManager.hasTransport(capabilities, transport)) {
+                        System.out.printf("      - %s%n", ConnectivityManager.getTransportName(transport));
+                    }
+                }
+                
+                System.out.println("    Capabilities:");
+                for (int capability = 0; capability <= ConnectivityManager.NET_CAPABILITY_LOCAL_NETWORK; capability++) {
+                    if (connectivityManager.hasCapability(capabilities, capability)) {
+                        System.out.printf("      - %s%n", ConnectivityManager.getCapabilityName(capability));
+                    }
+                }
+                
+                Object transportInfo = connectivityManager.getTransportInfo(capabilities);
+                if (transportInfo != null) {
+                    System.out.printf("    Transport Info: %s%n", transportInfo.toString());
+                }
+            } else {
+                System.out.println("    No capabilities available");
+            }
+            
+            Object linkProperties = connectivityManager.getLinkProperties(network);
+            if (linkProperties != null) {
+                System.out.println("    Link Properties:");
+                
+                String interfaceName = connectivityManager.getInterfaceName(linkProperties);
+                if (interfaceName != null) {
+                    System.out.printf("      Interface: %s%n", interfaceName);
+                }
+                
+                int mtu = connectivityManager.getMtu(linkProperties);
+                if (mtu > 0) {
+                    System.out.printf("      MTU: %d%n", mtu);
+                }
+                
+                List<?> linkAddresses = connectivityManager.getLinkAddresses(linkProperties);
+                if (linkAddresses != null && !linkAddresses.isEmpty()) {
+                    System.out.println("      Link Addresses:");
+                    for (Object addr : linkAddresses) {
+                        System.out.printf("        - %s%n", addr.toString());
+                    }
+                }
+                
+                List<?> dnsServers = connectivityManager.getDnsServers(linkProperties);
+                if (dnsServers != null && !dnsServers.isEmpty()) {
+                    System.out.println("      DNS Servers:");
+                    for (Object dns : dnsServers) {
+                        System.out.printf("        - %s%n", dns.toString());
+                    }
+                }
+                
+                List<?> routes = connectivityManager.getRoutes(linkProperties);
+                if (routes != null && !routes.isEmpty()) {
+                    System.out.println("      Routes:");
+                    for (Object route : routes) {
+                        System.out.printf("        - %s%n", route.toString());
+                    }
+                }
+            } else {
+                System.out.println("    No link properties available");
+            }
         }
     }
 

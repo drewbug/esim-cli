@@ -21,6 +21,7 @@ public final class ServiceManager {
 
     private static TelephonyManager telephonyManager;
     private static SubscriptionService subscriptionService;
+    private static ConnectivityManager connectivityManager;
 
     private ServiceManager() {
         /* not instantiable */
@@ -48,5 +49,12 @@ public final class ServiceManager {
             subscriptionService = SubscriptionService.create();
         }
         return subscriptionService;
+    }
+
+    public static ConnectivityManager getConnectivityManager() {
+        if (connectivityManager == null) {
+            connectivityManager = ConnectivityManager.create();
+        }
+        return connectivityManager;
     }
 }
