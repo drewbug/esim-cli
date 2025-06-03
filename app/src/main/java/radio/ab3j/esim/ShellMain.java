@@ -216,28 +216,88 @@ public class ShellMain {
 
     private static void printActiveSubscription() {
         try {
-            int activeSubId = getActiveSubscriptionId();
+            IInterface subService = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
+            if (subService == null) {
+                System.out.println("\n📶 Active Subscriptions: Service unavailable");
+                return;
+            }
+
+            System.out.println("\n📶 Active Subscriptions:");
+            
+            // Get all available subscriptions first
             SubscriptionService ss = ServiceManager.getSubscriptionService();
             if (ss == null) {
-                System.out.println("\n📶 Active eSIM Profile: Unknown (Service unavailable)");
+                System.out.println("  SubscriptionService unavailable");
                 return;
             }
             
-            List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
-
-            if (subs != null) {
-                for (SubscriptionInfo sub : subs)
-                    if (sub.getSubscriptionId() == activeSubId) {
-                        System.out.printf("\n📶 Active eSIM Profile: %s (ICCID: %s)%n",
-                                sub.getDisplayName(), sub.getIccId());
-                        return;
-                    }
+            List<SubscriptionInfo> availableSubs = ss.getAvailableSubscriptionInfoList();
+            if (availableSubs == null || availableSubs.isEmpty()) {
+                System.out.println("  No subscriptions found");
+                return;
             }
-            System.out.println("\n📶 Active eSIM Profile: Unknown");
+
+            // Get fake context for proper package name and attribution
+            FakeContext mContext = FakeContext.get();
+            
+            // Get active subscription info method
+            Method getActiveSubscriptionInfoMethod = null;
+            try {
+                // Try with String parameters (newer Android versions)
+                getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", int.class, String.class, String.class);
+            } catch (NoSuchMethodException e) {
+                try {
+                    // Try with just subId parameter (older Android versions)
+                    getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", int.class);
+                } catch (NoSuchMethodException e2) {
+                    // Method not available, show all available subscriptions instead
+                    System.out.println("  Cannot determine active status, showing all available:");
+                    for (SubscriptionInfo sub : availableSubs) {
+                        System.out.printf("  - Slot %d: %s (ICCID: %s, SubId: %d)%n",
+                                sub.getSimSlotIndex(),
+                                sub.getDisplayName(),
+                                sub.getIccId(),
+                                sub.getSubscriptionId());
+                    }
+                    return;
+                }
+            }
+
+            // Check each available subscription to see if it's active
+            int activeCount = 0;
+            for (SubscriptionInfo sub : availableSubs) {
+                try {
+                    SubscriptionInfo activeInfo = null;
+                    if (getActiveSubscriptionInfoMethod.getParameterCount() > 1) {
+                        // Use mContext.getOpPackageName() and null for attribution tag
+                        activeInfo = (SubscriptionInfo) getActiveSubscriptionInfoMethod.invoke(subService, sub.getSubscriptionId(), mContext.getOpPackageName(), null);
+                    } else {
+                        activeInfo = (SubscriptionInfo) getActiveSubscriptionInfoMethod.invoke(subService, sub.getSubscriptionId());
+                    }
+                    
+                    if (activeInfo != null) {
+                        activeCount++;
+                        System.out.printf("  - Slot %d: %s (ICCID: %s, SubId: %d)%n",
+                                activeInfo.getSimSlotIndex(),
+                                activeInfo.getDisplayName(),
+                                activeInfo.getIccId(),
+                                activeInfo.getSubscriptionId());
+                    }
+                } catch (Exception e) {
+                    Ln.e("Error checking subscription " + sub.getSubscriptionId(), e);
+                }
+            }
+            
+            if (activeCount == 0) {
+                System.out.println("  No active subscriptions found");
+            }
+
         } catch (Exception e) {
-            System.out.println("\n📶 Active eSIM Profile: Unknown (Error accessing service)");
+            System.out.println("\n📶 Active Subscriptions: Error accessing service");
+            Ln.e("Error in printActiveSubscription", e);
         }
     }
+
 
     private static void printTelephonyStates() {
         IInterface telephony = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
@@ -294,6 +354,24 @@ public class ShellMain {
 
     private static String invokeTelephonyStringMethod(IInterface srv, String method, Object... args) {
         try {
+            // Special handling for getImeiForSlot
+            if ("getImeiForSlot".equals(method) && args.length == 2) {
+                // First try with 3 parameters (slot, package, featureId)
+                try {
+                    Method m = srv.getClass().getMethod(method, int.class, String.class, String.class);
+                    return (String) m.invoke(srv, args[0], args[1], null);
+                } catch (NoSuchMethodException e) {
+                    // Fall back to 2-parameter version
+                    try {
+                        Method m = srv.getClass().getMethod(method, int.class, String.class);
+                        return (String) m.invoke(srv, args[0], args[1]);
+                    } catch (NoSuchMethodException e2) {
+                        // Neither version exists
+                        return null;
+                    }
+                }
+            }
+            
             Class<?>[] types = Arrays.stream(args)
                     .map(a -> a instanceof Integer ? int.class : String.class)
                     .toArray(Class[]::new);
