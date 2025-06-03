@@ -29,7 +29,13 @@ public final class SubscriptionService {
 
     private Method getGetAvailableSubscriptionInfoListMethod() throws NoSuchMethodException {
         if (getAvailableSubscriptionInfoListMethod == null) {
-            getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList", String.class);
+            try {
+                // Try with String parameter first (newer Android versions)
+                getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList", String.class);
+            } catch (NoSuchMethodException e) {
+                // Try without parameters (older Android versions)
+                getAvailableSubscriptionInfoListMethod = service.getClass().getMethod("getAvailableSubscriptionInfoList");
+            }
         }
         return getAvailableSubscriptionInfoListMethod;
     }
@@ -37,7 +43,15 @@ public final class SubscriptionService {
     public List<SubscriptionInfo> getAvailableSubscriptionInfoList() {
         try {
             Method method = getGetAvailableSubscriptionInfoListMethod();
-            return (List<SubscriptionInfo>) method.invoke(service, FakeContext.PACKAGE_NAME);
+            // Check if method takes parameters
+            if (method.getParameterCount() > 0) {
+                return (List<SubscriptionInfo>) method.invoke(service, FakeContext.PACKAGE_NAME);
+            } else {
+                return (List<SubscriptionInfo>) method.invoke(service);
+            }
+        } catch (NoSuchMethodException e) {
+            // Method doesn't exist on this device
+            return null;
         } catch (ReflectiveOperationException e) {
             Ln.e("Could not invoke method", e);
             return null;

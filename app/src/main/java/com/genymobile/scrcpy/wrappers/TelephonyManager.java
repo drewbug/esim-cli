@@ -5,7 +5,6 @@ import com.genymobile.scrcpy.Ln;
 
 import android.annotation.SuppressLint;
 import android.os.IInterface;
-import android.telephony.UiccSlotInfo;
 
 import java.lang.reflect.Method;
 
@@ -14,6 +13,7 @@ public final class TelephonyManager {
 
     private final IInterface manager;
     private Method getUiccSlotsInfoMethod;
+    private static Class<?> uiccSlotInfoClass;
 
     static TelephonyManager create() {
         IInterface manager = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
@@ -24,6 +24,13 @@ public final class TelephonyManager {
         this.manager = manager;
     }
 
+    private static Class<?> getUiccSlotInfoClass() throws ClassNotFoundException {
+        if (uiccSlotInfoClass == null) {
+            uiccSlotInfoClass = Class.forName("android.telephony.UiccSlotInfo");
+        }
+        return uiccSlotInfoClass;
+    }
+
     private Method getGetUiccSlotsInfoMethod() throws NoSuchMethodException {
         if (getUiccSlotsInfoMethod == null) {
             getUiccSlotsInfoMethod = manager.getClass().getMethod("getUiccSlotsInfo");
@@ -31,10 +38,10 @@ public final class TelephonyManager {
         return getUiccSlotsInfoMethod;
     }
 
-    public UiccSlotInfo[] getUiccSlotsInfo() {
+    public Object[] getUiccSlotsInfo() {
         try {
             Method method = getGetUiccSlotsInfoMethod();
-            return (UiccSlotInfo[]) method.invoke(manager);
+            return (Object[]) method.invoke(manager);
         } catch (ReflectiveOperationException e) {
             Ln.e("Could not invoke getUiccSlotsInfo method", e);
             return null;

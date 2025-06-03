@@ -122,19 +122,28 @@ public class ShellMain {
     }
 
     private static void printActiveSubscription() {
-        int activeSubId = getActiveSubscriptionId();
-        SubscriptionService ss = ServiceManager.getSubscriptionService();
-        List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
+        try {
+            int activeSubId = getActiveSubscriptionId();
+            SubscriptionService ss = ServiceManager.getSubscriptionService();
+            if (ss == null) {
+                System.out.println("\n📶 Active eSIM Profile: Unknown (Service unavailable)");
+                return;
+            }
+            
+            List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
 
-        if (subs != null) {
-            for (SubscriptionInfo sub : subs)
-                if (sub.getSubscriptionId() == activeSubId) {
-                    System.out.printf("\n📶 Active eSIM Profile: %s (ICCID: %s)%n",
-                            sub.getDisplayName(), sub.getIccId());
-                    return;
-                }
+            if (subs != null) {
+                for (SubscriptionInfo sub : subs)
+                    if (sub.getSubscriptionId() == activeSubId) {
+                        System.out.printf("\n📶 Active eSIM Profile: %s (ICCID: %s)%n",
+                                sub.getDisplayName(), sub.getIccId());
+                        return;
+                    }
+            }
+            System.out.println("\n📶 Active eSIM Profile: Unknown");
+        } catch (Exception e) {
+            System.out.println("\n📶 Active eSIM Profile: Unknown (Error accessing service)");
         }
-        System.out.println("\n📶 Active eSIM Profile: Unknown");
     }
 
     private static void printTelephonyStates() {
@@ -182,6 +191,8 @@ public class ShellMain {
             Method m = srv.getClass().getMethod(method, types);
             boolean res = (boolean) m.invoke(srv, args);
             System.out.printf("  - %s: %s%n", method, res ? "✅ YES" : "❌ NO");
+        } catch (NoSuchMethodException e) {
+            // Method doesn't exist on this device, skip silently
         } catch (Exception e) {
             Ln.e("Reflection error: " + method, e);
             System.out.printf("  - %s: ⚠️ ERROR%n", method);
@@ -195,6 +206,9 @@ public class ShellMain {
                     .toArray(Class[]::new);
             Method m = srv.getClass().getMethod(method, types);
             return (String) m.invoke(srv, args);
+        } catch (NoSuchMethodException e) {
+            // Method doesn't exist on this device, return null silently
+            return null;
         } catch (Exception e) {
             Ln.e("Reflection error: " + method, e);
             return null;
