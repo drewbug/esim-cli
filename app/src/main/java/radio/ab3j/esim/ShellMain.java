@@ -32,21 +32,24 @@ public class ShellMain {
             }
         }
 
+        // Print separator at the beginning
+        System.out.println("\n" + "=".repeat(60));
+
         try {
-            printNetworkInfo();
-            printDeviceImeis();
-            printActiveSubscription();
+            printActiveSubscriptionsAndNetworks();
             printTelephonyStates();
         } catch (Exception e) {
             Ln.e("Error initializing ShellMain", e);
         }
 
+        // Print separator between status report and CLI menu
+        System.out.println("\n" + "=".repeat(60) + "\n");
+
         while (true) {
-            System.out.println("\n📶 eSIM Activation CLI 📶");
             System.out.println("1. Activate an existing eSIM profile");
             System.out.println("2. Download a new eSIM profile");
             System.out.println("3. Exit");
-            System.out.print("Choose an option: ");
+            System.out.print("\nChoose an option: ");
 
             String choice = scanner.nextLine().trim();
             try {
@@ -61,7 +64,7 @@ public class ShellMain {
                         System.out.println("Exiting...");
                         return;
                     default:
-                        System.out.println("Invalid choice, try again.");
+                        System.out.println("Invalid choice, try again.\n");
                 }
             } catch (Exception e) {
                 Ln.e("Error in main loop", e);
@@ -108,195 +111,325 @@ public class ShellMain {
         }
     }
 
-    private static void printNetworkInfo() {
-        ConnectivityManager connectivityManager = ServiceManager.getConnectivityManager();
-        if (connectivityManager == null) {
-            Ln.e("ConnectivityManager unavailable");
-            return;
-        }
-
-        System.out.println("\n🌐 Network Information:");
-        Object[] networks = connectivityManager.getAllNetworks();
-        
-        if (networks == null || networks.length == 0) {
-            System.out.println("  No networks available");
-            return;
-        }
-
-        for (int i = 0; i < networks.length; i++) {
-            Object network = networks[i];
-            System.out.printf("\n  Network %d:%n", i + 1);
-            
-            Object capabilities = connectivityManager.getNetworkCapabilities(network);
-            if (capabilities != null) {
-                System.out.println("    Transports:");
-                for (int transport = 0; transport <= ConnectivityManager.TRANSPORT_SATELLITE; transport++) {
-                    if (connectivityManager.hasTransport(capabilities, transport)) {
-                        System.out.printf("      - %s%n", ConnectivityManager.getTransportName(transport));
-                    }
-                }
-                
-                System.out.println("    Capabilities:");
-                for (int capability = 0; capability <= ConnectivityManager.NET_CAPABILITY_LOCAL_NETWORK; capability++) {
-                    if (connectivityManager.hasCapability(capabilities, capability)) {
-                        System.out.printf("      - %s%n", ConnectivityManager.getCapabilityName(capability));
-                    }
-                }
-                
-                Object transportInfo = connectivityManager.getTransportInfo(capabilities);
-                if (transportInfo != null) {
-                    System.out.printf("    Transport Info: %s%n", transportInfo.toString());
-                }
-                
-                Object networkSpecifier = connectivityManager.getNetworkSpecifier(capabilities);
-                if (networkSpecifier != null) {
-                    System.out.printf("    Network Specifier: %s%n", networkSpecifier.toString());
-                }
-            } else {
-                System.out.println("    No capabilities available");
-            }
-            
-            Object linkProperties = connectivityManager.getLinkProperties(network);
-            if (linkProperties != null) {
-                System.out.println("    Link Properties:");
-                
-                String interfaceName = connectivityManager.getInterfaceName(linkProperties);
-                if (interfaceName != null) {
-                    System.out.printf("      Interface: %s%n", interfaceName);
-                }
-                
-                int mtu = connectivityManager.getMtu(linkProperties);
-                if (mtu > 0) {
-                    System.out.printf("      MTU: %d%n", mtu);
-                }
-                
-                List<?> linkAddresses = connectivityManager.getLinkAddresses(linkProperties);
-                if (linkAddresses != null && !linkAddresses.isEmpty()) {
-                    System.out.println("      Link Addresses:");
-                    for (Object addr : linkAddresses) {
-                        System.out.printf("        - %s%n", addr.toString());
-                    }
-                }
-                
-                List<?> dnsServers = connectivityManager.getDnsServers(linkProperties);
-                if (dnsServers != null && !dnsServers.isEmpty()) {
-                    System.out.println("      DNS Servers:");
-                    for (Object dns : dnsServers) {
-                        System.out.printf("        - %s%n", dns.toString());
-                    }
-                }
-                
-                List<?> routes = connectivityManager.getRoutes(linkProperties);
-                if (routes != null && !routes.isEmpty()) {
-                    System.out.println("      Routes:");
-                    for (Object route : routes) {
-                        System.out.printf("        - %s%n", route.toString());
-                    }
-                }
-            } else {
-                System.out.println("    No link properties available");
-            }
-        }
-    }
-
-    private static void printDeviceImeis() {
-        IInterface telephony = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
-        if (telephony == null) {
-            Ln.e("ITelephony unavailable");
-            return;
-        }
-
-        System.out.println("\n📱 Device IMEI(s):");
-        for (int slot = 0; slot < 2; slot++) {
-            String imei = invokeTelephonyStringMethod(telephony, "getImeiForSlot", slot, CALLING_PACKAGE);
-            if (imei != null && !imei.isEmpty())
-                System.out.printf("  - Slot %d: %s%n", slot, imei);
-        }
-    }
-
-    private static void printActiveSubscription() {
+    private static void printActiveSubscriptionsAndNetworks() {
         try {
-            IInterface subService = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
-            if (subService == null) {
+            // Get subscription service
+            SubscriptionService ss = ServiceManager.getSubscriptionService();
+            if (ss == null) {
                 System.out.println("\n📶 Active Subscriptions: Service unavailable");
                 return;
             }
-
-            System.out.println("\n📶 Active Subscriptions:");
             
-            // Get all available subscriptions first
-            SubscriptionService ss = ServiceManager.getSubscriptionService();
-            if (ss == null) {
-                System.out.println("  SubscriptionService unavailable");
-                return;
-            }
-            
+            // Get available subscriptions
             List<SubscriptionInfo> availableSubs = ss.getAvailableSubscriptionInfoList();
             if (availableSubs == null || availableSubs.isEmpty()) {
-                System.out.println("  No subscriptions found");
+                System.out.println("\n📶 Active Subscriptions: No subscriptions found");
                 return;
             }
-
-            // Get fake context for proper package name and attribution
-            FakeContext mContext = FakeContext.get();
             
-            // Get active subscription info method
-            Method getActiveSubscriptionInfoMethod = null;
-            try {
-                // Try with String parameters (newer Android versions)
-                getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", int.class, String.class, String.class);
-            } catch (NoSuchMethodException e) {
-                try {
-                    // Try with just subId parameter (older Android versions)
-                    getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", int.class);
-                } catch (NoSuchMethodException e2) {
-                    // Method not available, show all available subscriptions instead
-                    System.out.println("  Cannot determine active status, showing all available:");
-                    for (SubscriptionInfo sub : availableSubs) {
-                        System.out.printf("  - Slot %d: %s (ICCID: %s, SubId: %d)%n",
-                                sub.getSimSlotIndex(),
-                                sub.getDisplayName(),
-                                sub.getIccId(),
-                                sub.getSubscriptionId());
-                    }
-                    return;
-                }
+            // Get connectivity manager for network info
+            ConnectivityManager connectivityManager = ServiceManager.getConnectivityManager();
+            if (connectivityManager == null) {
+                System.out.println("\n📶 Active Subscriptions: Network service unavailable");
+                return;
             }
-
-            // Check each available subscription to see if it's active
-            int activeCount = 0;
+            
+            // Build a map of subId to networks
+            Map<Integer, List<NetworkInfo>> subIdToNetworks = buildSubscriptionNetworkMap(connectivityManager);
+            
+            System.out.println("\n📶 Active Subscriptions:");
+            
+            // Group subscriptions by slot
+            Map<Integer, List<SubscriptionInfo>> slotToSubs = new HashMap<>();
             for (SubscriptionInfo sub : availableSubs) {
-                try {
-                    SubscriptionInfo activeInfo = null;
-                    if (getActiveSubscriptionInfoMethod.getParameterCount() > 1) {
-                        // Use mContext.getOpPackageName() and null for attribution tag
-                        activeInfo = (SubscriptionInfo) getActiveSubscriptionInfoMethod.invoke(subService, sub.getSubscriptionId(), mContext.getOpPackageName(), null);
-                    } else {
-                        activeInfo = (SubscriptionInfo) getActiveSubscriptionInfoMethod.invoke(subService, sub.getSubscriptionId());
+                int slot = sub.getSimSlotIndex();
+                slotToSubs.computeIfAbsent(slot, k -> new ArrayList<>()).add(sub);
+            }
+            
+            // Get telephony service for IMEI info
+            IInterface telephony = ServiceManager.getService("phone", "com.android.internal.telephony.ITelephony");
+            
+            // Display by slot
+            for (int slot = 0; slot < 2; slot++) {
+                // Get IMEI for this slot
+                String imei = null;
+                if (telephony != null) {
+                    imei = invokeTelephonyStringMethod(telephony, "getImeiForSlot", slot, CALLING_PACKAGE);
+                }
+                
+                List<SubscriptionInfo> slotSubs = slotToSubs.get(slot);
+                if (slotSubs == null || slotSubs.isEmpty()) {
+                    System.out.printf("\n  Slot %d:%n", slot);
+                    if (imei != null && !imei.isEmpty()) {
+                        System.out.printf("    IMEI: %s%n", imei);
                     }
+                    continue;
+                }
+                
+                for (SubscriptionInfo sub : slotSubs) {
+                    System.out.printf("\n  Slot %d: %s%n", slot, sub.getDisplayName());
+                    if (imei != null && !imei.isEmpty()) {
+                        System.out.printf("    IMEI: %s%n", imei);
+                    }
+                    System.out.printf("    ICCID: %s%n", sub.getIccId());
                     
-                    if (activeInfo != null) {
-                        activeCount++;
-                        System.out.printf("  - Slot %d: %s (ICCID: %s, SubId: %d)%n",
-                                activeInfo.getSimSlotIndex(),
-                                activeInfo.getDisplayName(),
-                                activeInfo.getIccId(),
-                                activeInfo.getSubscriptionId());
+                    // Check if this subscription is active
+                    if (isSubscriptionActive(sub.getSubscriptionId())) {
+                        // Show associated networks
+                        List<NetworkInfo> networks = subIdToNetworks.get(sub.getSubscriptionId());
+                        if (networks != null && !networks.isEmpty()) {
+                            System.out.println("    Network Connections:");
+                            for (NetworkInfo netInfo : networks) {
+                                System.out.printf("      • %s: %s%n", netInfo.type, netInfo.interface_);
+                                if (netInfo.ipAddresses != null && !netInfo.ipAddresses.isEmpty()) {
+                                    for (String ip : netInfo.ipAddresses) {
+                                        System.out.printf("        - %s%n", ip);
+                                    }
+                                }
+                            }
+                        } else {
+                            System.out.println("    Network Connections: None active");
+                        }
+                    } else {
+                        System.out.println("    Status: ⭕ Inactive");
                     }
-                } catch (Exception e) {
-                    Ln.e("Error checking subscription " + sub.getSubscriptionId(), e);
                 }
             }
             
-            if (activeCount == 0) {
-                System.out.println("  No active subscriptions found");
-            }
-
         } catch (Exception e) {
             System.out.println("\n📶 Active Subscriptions: Error accessing service");
-            Ln.e("Error in printActiveSubscription", e);
+            Ln.e("Error in printActiveSubscriptionsAndNetworks", e);
         }
     }
+    
+    private static class NetworkInfo {
+        String type;
+        String interface_;
+        List<String> ipAddresses;
+        String status;
+        
+        NetworkInfo(String type, String interface_, List<String> ipAddresses, String status) {
+            this.type = type;
+            this.interface_ = interface_;
+            this.ipAddresses = ipAddresses;
+            this.status = status;
+        }
+    }
+    
+    private static Map<Integer, List<NetworkInfo>> buildSubscriptionNetworkMap(ConnectivityManager cm) {
+        Map<Integer, List<NetworkInfo>> map = new HashMap<>();
+        
+        try {
+            Object[] networks = cm.getAllNetworks();
+            if (networks == null) return map;
+            
+            for (Object network : networks) {
+                Object capabilities = cm.getNetworkCapabilities(network);
+                if (capabilities == null) continue;
+                
+                // Get subscription ID from network specifier
+                Object networkSpecifier = cm.getNetworkSpecifier(capabilities);
+                if (networkSpecifier == null) continue;
+                
+                int subId = parseSubIdFromSpecifier(networkSpecifier.toString());
+                if (subId == -1) continue;
+                
+                // Get transport types
+                String transportTypes = getTransportTypes(cm, capabilities);
+                
+                // Determine network type
+                String networkType = determineNetworkType(cm, capabilities);
+                
+                // Get link properties
+                Object linkProperties = cm.getLinkProperties(network);
+                String interfaceName = "unknown";
+                List<String> ipAddresses = new ArrayList<>();
+                
+                if (linkProperties != null) {
+                    String iface = cm.getInterfaceName(linkProperties);
+                    if (iface != null) {
+                        interfaceName = iface;
+                    }
+                    
+                    List<?> linkAddresses = cm.getLinkAddresses(linkProperties);
+                    if (linkAddresses != null) {
+                        for (Object addr : linkAddresses) {
+                            String addrStr = addr.toString();
+                            // IPv6 addresses contain colons (not just double colons)
+                            // IPv4 addresses contain dots
+                            if (addrStr.contains(":") && !addrStr.contains(".")) {
+                                ipAddresses.add("IPv6: " + addrStr);
+                            } else if (addrStr.contains(".")) {
+                                ipAddresses.add("IPv4: " + addrStr);
+                            } else {
+                                ipAddresses.add(addrStr);
+                            }
+                        }
+                    }
+                }
+                
+                // Build status string
+                List<String> statusFlags = new ArrayList<>();
+                if (cm.hasCapability(capabilities, ConnectivityManager.NET_CAPABILITY_VALIDATED)) {
+                    statusFlags.add("✅ Validated");
+                }
+                if (cm.hasCapability(capabilities, ConnectivityManager.NET_CAPABILITY_NOT_ROAMING)) {
+                    statusFlags.add("🏠 Home");
+                } else {
+                    statusFlags.add("✈️ Roaming");
+                }
+                String status = String.join(", ", statusFlags);
+                
+                // Include transport types in network type
+                String fullNetworkType = networkType + " [" + transportTypes + "]";
+                
+                NetworkInfo netInfo = new NetworkInfo(fullNetworkType, interfaceName, ipAddresses, status);
+                map.computeIfAbsent(subId, k -> new ArrayList<>()).add(netInfo);
+            }
+        } catch (Exception e) {
+            Ln.e("Error building network map", e);
+        }
+        
+        return map;
+    }
+    
+    private static boolean isSubscriptionActive(int subId) {
+        try {
+            IInterface subService = ServiceManager.getService("isub", "com.android.internal.telephony.ISub");
+            if (subService == null) return false;
+            
+            FakeContext mContext = FakeContext.get();
+            
+            // Try to get active subscription info
+            Method getActiveSubscriptionInfoMethod = null;
+            try {
+                getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", 
+                    int.class, String.class, String.class);
+                Object result = getActiveSubscriptionInfoMethod.invoke(subService, subId, 
+                    mContext.getOpPackageName(), null);
+                return result != null;
+            } catch (NoSuchMethodException e) {
+                try {
+                    getActiveSubscriptionInfoMethod = subService.getClass().getMethod("getActiveSubscriptionInfo", int.class);
+                    Object result = getActiveSubscriptionInfoMethod.invoke(subService, subId);
+                    return result != null;
+                } catch (Exception e2) {
+                    // Can't determine active status
+                    return true; // Assume active if we can't check
+                }
+            }
+        } catch (Exception e) {
+            return true; // Assume active if error
+        }
+    }
+    
+    private static Set<Integer> getActiveSubscriptionIds() {
+        Set<Integer> activeSubIds = new HashSet<>();
+        try {
+            SubscriptionService ss = ServiceManager.getSubscriptionService();
+            if (ss != null) {
+                List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
+                if (subs != null) {
+                    for (SubscriptionInfo sub : subs) {
+                        activeSubIds.add(sub.getSubscriptionId());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Ln.e("Error getting active subscription IDs", e);
+        }
+        return activeSubIds;
+    }
+    
+    private static Map<Integer, String> getSubIdToCarrierMap() {
+        Map<Integer, String> map = new HashMap<>();
+        try {
+            SubscriptionService ss = ServiceManager.getSubscriptionService();
+            if (ss != null) {
+                List<SubscriptionInfo> subs = ss.getAvailableSubscriptionInfoList();
+                if (subs != null) {
+                    for (SubscriptionInfo sub : subs) {
+                        map.put(sub.getSubscriptionId(), sub.getDisplayName().toString());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Ln.e("Error building carrier map", e);
+        }
+        return map;
+    }
+    
+    private static int parseSubIdFromSpecifier(String specifier) {
+        // Parse "TelephonyNetworkSpecifier [mSubId = 3]" format
+        int startIdx = specifier.indexOf("mSubId = ");
+        if (startIdx != -1) {
+            startIdx += "mSubId = ".length();
+            int endIdx = specifier.indexOf("]", startIdx);
+            if (endIdx != -1) {
+                try {
+                    return Integer.parseInt(specifier.substring(startIdx, endIdx));
+                } catch (NumberFormatException e) {
+                    // Ignore
+                }
+            }
+        }
+        return -1;
+    }
+    
+    private static String determineNetworkType(ConnectivityManager cm, Object capabilities) {
+        if (cm.hasCapability(capabilities, ConnectivityManager.NET_CAPABILITY_IMS)) {
+            return "IMS/VoLTE";
+        } else if (cm.hasCapability(capabilities, ConnectivityManager.NET_CAPABILITY_INTERNET)) {
+            return "Internet/Data";
+        } else if (cm.hasCapability(capabilities, ConnectivityManager.NET_CAPABILITY_MMS)) {
+            return "MMS";
+        } else {
+            return "Other";
+        }
+    }
+    
+    private static String getTransportTypes(ConnectivityManager cm, Object capabilities) {
+        List<String> transports = new ArrayList<>();
+        
+        // Check all known transport types
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_CELLULAR)) {
+            transports.add("CELLULAR");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_WIFI)) {
+            transports.add("WIFI");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_BLUETOOTH)) {
+            transports.add("BLUETOOTH");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_ETHERNET)) {
+            transports.add("ETHERNET");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_VPN)) {
+            transports.add("VPN");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_WIFI_AWARE)) {
+            transports.add("WIFI_AWARE");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_LOWPAN)) {
+            transports.add("LOWPAN");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_TEST)) {
+            transports.add("TEST");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_USB)) {
+            transports.add("USB");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_THREAD)) {
+            transports.add("THREAD");
+        }
+        if (cm.hasTransport(capabilities, ConnectivityManager.TRANSPORT_SATELLITE)) {
+            transports.add("SATELLITE");
+        }
+        
+        return transports.isEmpty() ? "UNKNOWN" : String.join("+", transports);
+    }
+
+
 
 
     private static void printTelephonyStates() {
@@ -307,7 +440,7 @@ public class ShellMain {
         }
 
         int subId = getActiveSubscriptionId();
-        System.out.println("\n📡 Telephony States:");
+        System.out.println("\n📡 Telephony Status:\n");
 
         Map<String, Object[]> methods = new LinkedHashMap<>();
         methods.put("isConcurrentVoiceAndDataAllowed", new Object[]{subId});
