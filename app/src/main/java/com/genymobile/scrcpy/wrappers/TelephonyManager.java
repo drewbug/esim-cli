@@ -110,7 +110,7 @@ public final class TelephonyManager {
         }
     }
 
-    private Bundle invokeSatelliteMethodWithResultReceiver(String methodName) {
+    public Bundle invokeSatelliteMethodWithResultReceiver(String methodName) {
         try {
             Method method = manager.getClass().getMethod(methodName, ResultReceiver.class);
             
@@ -245,6 +245,137 @@ public final class TelephonyManager {
         } catch (Exception e) {
             Ln.e("Could not request satellite enabled", e);
             return -1;
+        }
+    }
+    
+    public int[] getSatelliteDisallowedReasons() {
+        try {
+            Method method = manager.getClass().getMethod("getSatelliteDisallowedReasons");
+            return (int[]) method.invoke(manager);
+        } catch (NoSuchMethodException e) {
+            Ln.e("getSatelliteDisallowedReasons method not found", e);
+            return null;
+        } catch (Exception e) {
+            Ln.e("Could not get satellite disallowed reasons", e);
+            return null;
+        }
+    }
+    
+    public Boolean requestIsCommunicationAllowedForCurrentLocation(int subId) {
+        try {
+            Method method = manager.getClass().getMethod("requestIsCommunicationAllowedForCurrentLocation", 
+                int.class, ResultReceiver.class);
+            
+            // Create a dedicated thread and looper for handling the result
+            final CountDownLatch latch = new CountDownLatch(1);
+            final Bundle[] resultBundle = new Bundle[1];
+            final Looper[] looper = new Looper[1];
+            
+            Thread handlerThread = new Thread(() -> {
+                Looper.prepare();
+                looper[0] = Looper.myLooper();
+                
+                // Create a ResultReceiver to capture the response
+                Handler handler = new Handler(looper[0]);
+                ResultReceiver receiver = new ResultReceiver(handler) {
+                    @Override
+                    protected void onReceiveResult(int resultCode, Bundle resultData) {
+                        resultBundle[0] = resultData;
+                        latch.countDown();
+                        looper[0].quit();
+                    }
+                };
+                
+                try {
+                    // Invoke the method
+                    method.invoke(manager, subId, receiver);
+                } catch (Exception e) {
+                    Ln.e("Error invoking requestIsCommunicationAllowedForCurrentLocation", e);
+                    latch.countDown();
+                    looper[0].quit();
+                }
+                
+                Looper.loop();
+            });
+            
+            handlerThread.start();
+            
+            // Wait for the result with a timeout
+            if (latch.await(5, TimeUnit.SECONDS)) {
+                if (resultBundle[0] != null && resultBundle[0].containsKey("communication_allowed")) {
+                    return resultBundle[0].getBoolean("communication_allowed");
+                }
+                return null;
+            } else {
+                Ln.e("Timeout waiting for requestIsCommunicationAllowedForCurrentLocation");
+                if (looper[0] != null) {
+                    looper[0].quit();
+                }
+                return null;
+            }
+        } catch (NoSuchMethodException e) {
+            // Method doesn't exist on this device
+            return null;
+        } catch (Exception e) {
+            Ln.e("Could not invoke requestIsCommunicationAllowedForCurrentLocation", e);
+            return null;
+        }
+    }
+    
+    public Bundle invokeCommunicationAllowedMethodWithResultReceiver(String methodName, int subId) {
+        try {
+            Method method = manager.getClass().getMethod(methodName, int.class, ResultReceiver.class);
+            
+            // Create a dedicated thread and looper for handling the result
+            final CountDownLatch latch = new CountDownLatch(1);
+            final Bundle[] resultBundle = new Bundle[1];
+            final Looper[] looper = new Looper[1];
+            
+            Thread handlerThread = new Thread(() -> {
+                Looper.prepare();
+                looper[0] = Looper.myLooper();
+                
+                // Create a ResultReceiver to capture the response
+                Handler handler = new Handler(looper[0]);
+                ResultReceiver receiver = new ResultReceiver(handler) {
+                    @Override
+                    protected void onReceiveResult(int resultCode, Bundle resultData) {
+                        resultBundle[0] = resultData;
+                        latch.countDown();
+                        looper[0].quit();
+                    }
+                };
+                
+                try {
+                    // Invoke the method
+                    method.invoke(manager, subId, receiver);
+                } catch (Exception e) {
+                    Ln.e("Error invoking " + methodName, e);
+                    latch.countDown();
+                    looper[0].quit();
+                }
+                
+                Looper.loop();
+            });
+            
+            handlerThread.start();
+            
+            // Wait for the result with a timeout
+            if (latch.await(5, TimeUnit.SECONDS)) {
+                return resultBundle[0];
+            } else {
+                Ln.e("Timeout waiting for " + methodName);
+                if (looper[0] != null) {
+                    looper[0].quit();
+                }
+                return null;
+            }
+        } catch (NoSuchMethodException e) {
+            // Method doesn't exist on this device
+            return null;
+        } catch (Exception e) {
+            Ln.e("Could not invoke " + methodName, e);
+            return null;
         }
     }
 }

@@ -41,7 +41,8 @@ public class ShellMain {
         static final String ACTIVATE_EXISTING = "1";
         static final String DOWNLOAD_NEW = "2";
         static final String SATELLITE_DEMO_MODE = "3";
-        static final String EXIT = "4";
+        static final String DUMP_TELEPHONY_METHODS = "4";
+        static final String EXIT = "5";
     }
     
     private static final class StatusEmojis {
@@ -105,7 +106,8 @@ public class ShellMain {
         System.out.println("1. Activate an existing eSIM profile");
         System.out.println("2. Download a new eSIM profile");
         System.out.println("3. Enable satellite demo mode");
-        System.out.println("4. Exit");
+        System.out.println("4. Dump ITelephony interface methods");
+        System.out.println("5. Exit");
         System.out.print("\nChoose an option: ");
     }
     
@@ -119,6 +121,9 @@ public class ShellMain {
                 return false;
             case MenuOptions.SATELLITE_DEMO_MODE:
                 enableSatelliteDemoMode();
+                return false;
+            case MenuOptions.DUMP_TELEPHONY_METHODS:
+                dumpTelephonyMethods();
                 return false;
             case MenuOptions.EXIT:
                 System.out.println("Exiting...");
@@ -677,69 +682,105 @@ public class ShellMain {
                 return;
             }
             
-            // Display basic satellite status
-            Boolean isSupported = telephonyManager.requestIsSatelliteSupported();
-            Boolean isEnabled = telephonyManager.requestIsSatelliteEnabled();
-            Boolean isProvisioned = telephonyManager.requestIsSatelliteProvisioned();
-            Boolean isDemoMode = telephonyManager.requestIsDemoModeEnabled();
-            Integer nbIotSubscriptionId = telephonyManager.requestSelectedNbIotSatelliteSubscriptionId();
+            // Display basic satellite status - show all keys from each bundle
+            Bundle supportedBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteSupported");
+            if (supportedBundle != null) {
+                displayBundleContents("Satellite Supported Result", supportedBundle, "    ");
+            }
             
-            System.out.printf("    - Satellite supported: %s%n", 
-                isSupported != null ? (isSupported ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
-            System.out.printf("    - Satellite enabled: %s%n", 
-                isEnabled != null ? (isEnabled ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
-            System.out.printf("    - Satellite provisioned: %s%n", 
-                isProvisioned != null ? (isProvisioned ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
-            System.out.printf("    - Demo mode enabled: %s%n", 
-                isDemoMode != null ? (isDemoMode ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
-            System.out.printf("    - NB-IoT satellite subscription ID: %s%n", 
-                nbIotSubscriptionId != null ? nbIotSubscriptionId : StatusEmojis.ERROR + " (Unknown)");
+            Bundle enabledBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteEnabled");
+            if (enabledBundle != null) {
+                displayBundleContents("Satellite Enabled Result", enabledBundle, "    ");
+            }
+            
+            Bundle provisionedBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteProvisioned");
+            if (provisionedBundle != null) {
+                displayBundleContents("Satellite Provisioned Result", provisionedBundle, "    ");
+            }
+            
+            Bundle demoModeBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsDemoModeEnabled");
+            if (demoModeBundle != null) {
+                displayBundleContents("Demo Mode Result", demoModeBundle, "    ");
+            }
+            
+            Bundle nbIotBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestSelectedNbIotSatelliteSubscriptionId");
+            if (nbIotBundle != null) {
+                displayBundleContents("NB-IoT Subscription Result", nbIotBundle, "    ");
+            }
             
             // Display detailed capabilities if available
             Bundle satelliteCapabilities = telephonyManager.requestSatelliteCapabilities();
             if (satelliteCapabilities != null && !satelliteCapabilities.isEmpty()) {
                 System.out.println("\n  Satellite Capabilities:");
-                
-                // Common satellite capability keys based on Android documentation
-                String[] capabilityKeys = {
-                    "satellite_supported",
-                    "satellite_pointing_ui_supported", 
-                    "satellite_emergency_mode_supported",
-                    "satellite_demo_mode_supported",
-                    "max_bytes_per_out_going_datagram",
-                    "antenna_position_keys",
-                    "supported_radio_technologies"
-                };
-                
-                boolean hasCapabilities = false;
-                for (String key : capabilityKeys) {
-                    if (satelliteCapabilities.containsKey(key)) {
-                        hasCapabilities = true;
-                        Object value = satelliteCapabilities.get(key);
-                        if (value instanceof Boolean) {
-                            System.out.printf("    - %s: %s%n", key, (Boolean) value ? StatusEmojis.YES : StatusEmojis.NO);
-                        } else {
-                            System.out.printf("    - %s: %s%n", key, value);
-                        }
-                    }
-                }
-                
-                // If no known keys were found, display all keys in the bundle
-                if (!hasCapabilities) {
-                    for (String key : satelliteCapabilities.keySet()) {
-                        Object value = satelliteCapabilities.get(key);
-                        if (value instanceof Boolean) {
-                            System.out.printf("    - %s: %s%n", key, (Boolean) value ? StatusEmojis.YES : StatusEmojis.NO);
-                        } else {
-                            System.out.printf("    - %s: %s%n", key, value);
-                        }
-                    }
-                }
+                displayBundleContents(null, satelliteCapabilities, "    ");
             }
+            
+            // Display communication allowed status for all subscriptions
+            displayCommunicationAllowedStatus(telephonyManager);
             
         } catch (Exception e) {
             Ln.e("Error retrieving satellite information", e);
             System.out.println("    - Satellite status: " + StatusEmojis.ERROR + " (Error occurred)");
+        }
+    }
+    
+    private static void displayCommunicationAllowedStatus(TelephonyManager telephonyManager) {
+        System.out.println("\n  Communication Allowed Status (per subscription):");
+        
+        try {
+            // Get all available subscriptions
+            SubscriptionService subscriptionService = ServiceManager.getSubscriptionService();
+            if (subscriptionService == null) {
+                System.out.println("    - " + StatusEmojis.ERROR + " (SubscriptionService unavailable)");
+                return;
+            }
+            
+            List<SubscriptionInfo> availableSubscriptions = subscriptionService.getAvailableSubscriptionInfoList();
+            if (availableSubscriptions == null || availableSubscriptions.isEmpty()) {
+                System.out.println("    - No subscriptions found");
+                return;
+            }
+            
+            // Check communication allowed for each subscription
+            for (SubscriptionInfo subscription : availableSubscriptions) {
+                int subId = subscription.getSubscriptionId();
+                String displayName = subscription.getDisplayName().toString();
+                
+                System.out.printf("    - %s (SubId: %d):%n", displayName, subId);
+                
+                Bundle result = telephonyManager.invokeCommunicationAllowedMethodWithResultReceiver(
+                    "requestIsCommunicationAllowedForCurrentLocation", subId);
+                
+                if (result != null) {
+                    displayBundleContents(null, result, "      ");
+                } else {
+                    System.out.println("      " + StatusEmojis.ERROR + " (No response)");
+                }
+            }
+        } catch (Exception e) {
+            Ln.e("Error checking communication allowed status", e);
+            System.out.println("    - " + StatusEmojis.ERROR + " (Error occurred)");
+        }
+    }
+    
+    private static void displayBundleContents(String title, Bundle bundle, String indent) {
+        if (title != null) {
+            System.out.println(indent + title + ":");
+            indent = indent + "  ";
+        }
+        
+        if (bundle == null || bundle.isEmpty()) {
+            System.out.println(indent + "- (Empty bundle)");
+            return;
+        }
+        
+        for (String key : bundle.keySet()) {
+            Object value = bundle.get(key);
+            if (value instanceof Boolean) {
+                System.out.printf("%s- %s: %s%n", indent, key, (Boolean) value ? StatusEmojis.YES : StatusEmojis.NO);
+            } else {
+                System.out.printf("%s- %s: %s%n", indent, key, value);
+            }
         }
     }
 
@@ -802,6 +843,88 @@ public class ShellMain {
         }
     }
     
+    private static void dumpTelephonyMethods() {
+        System.out.println("\n" + StatusEmojis.TELEPHONY + " ITelephony Interface Methods Dump\n");
+        
+        try {
+            IInterface telephony = ServiceManager.getService(TELEPHONY_SERVICE, TELEPHONY_INTERFACE);
+            if (telephony == null) {
+                System.out.println(StatusEmojis.ERROR + " Could not get ITelephony service");
+                return;
+            }
+            
+            // Get all methods from the ITelephony interface
+            Method[] methods = telephony.getClass().getMethods();
+            
+            System.out.println("Total methods found: " + methods.length);
+            System.out.println(STATUS_SEPARATOR);
+            
+            // Sort methods alphabetically for easier reading
+            java.util.Arrays.sort(methods, (m1, m2) -> m1.getName().compareTo(m2.getName()));
+            
+            for (Method method : methods) {
+                // Skip methods from Object class
+                if (method.getDeclaringClass().equals(Object.class)) {
+                    continue;
+                }
+                
+                // Build method signature
+                StringBuilder signature = new StringBuilder();
+                signature.append(method.getName()).append("(");
+                
+                Class<?>[] paramTypes = method.getParameterTypes();
+                for (int i = 0; i < paramTypes.length; i++) {
+                    if (i > 0) signature.append(", ");
+                    signature.append(paramTypes[i].getSimpleName());
+                }
+                signature.append(")");
+                
+                // Add return type
+                signature.append(" → ").append(method.getReturnType().getSimpleName());
+                
+                System.out.println("  " + signature.toString());
+            }
+            
+            System.out.println(STATUS_SEPARATOR);
+            
+            // Also print some additional info
+            System.out.println("\nAdditional Information:");
+            System.out.println("  - Service Name: " + TELEPHONY_SERVICE);
+            System.out.println("  - Interface: " + TELEPHONY_INTERFACE);
+            System.out.println("  - Implementation Class: " + telephony.getClass().getName());
+            System.out.println("  - Package: " + telephony.getClass().getPackage().getName());
+            
+            // Count methods by prefix
+            Map<String, Integer> prefixCounts = new HashMap<>();
+            for (Method method : methods) {
+                if (method.getDeclaringClass().equals(Object.class)) {
+                    continue;
+                }
+                String name = method.getName();
+                String prefix = "";
+                if (name.startsWith("get")) prefix = "get";
+                else if (name.startsWith("set")) prefix = "set";
+                else if (name.startsWith("is")) prefix = "is";
+                else if (name.startsWith("has")) prefix = "has";
+                else if (name.startsWith("enable")) prefix = "enable";
+                else if (name.startsWith("disable")) prefix = "disable";
+                else if (name.startsWith("request")) prefix = "request";
+                else prefix = "other";
+                
+                prefixCounts.put(prefix, prefixCounts.getOrDefault(prefix, 0) + 1);
+            }
+            
+            System.out.println("\nMethod Count by Prefix:");
+            for (Map.Entry<String, Integer> entry : prefixCounts.entrySet()) {
+                System.out.printf("  - %s*: %d methods%n", entry.getKey(), entry.getValue());
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error dumping ITelephony methods", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to dump ITelephony methods");
+        }
+    }
+    
     private static void enableSatelliteDemoMode() {
         System.out.println("\n" + StatusEmojis.SATELLITE + " Satellite Demo Mode Configuration\n");
         
@@ -812,22 +935,40 @@ public class ShellMain {
             return;
         }
         
-        // Display current status
-        Boolean isSupported = telephonyManager.requestIsSatelliteSupported();
-        Boolean isEnabled = telephonyManager.requestIsSatelliteEnabled();
-        Boolean isDemoMode = telephonyManager.requestIsDemoModeEnabled();
-        
+        // Display current status - show all keys from bundles
         System.out.println("Current Status:");
-        System.out.printf("  - Satellite supported: %s%n", 
-            isSupported != null ? (isSupported ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
-        System.out.printf("  - Satellite enabled: %s%n", 
-            isEnabled != null ? (isEnabled ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
-        System.out.printf("  - Demo mode enabled: %s%n", 
-            isDemoMode != null ? (isDemoMode ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+        
+        Bundle supportedBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteSupported");
+        if (supportedBundle != null) {
+            displayBundleContents("Satellite Supported", supportedBundle, "  ");
+        }
+        
+        Bundle enabledBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteEnabled");
+        if (enabledBundle != null) {
+            displayBundleContents("Satellite Enabled", enabledBundle, "  ");
+        }
+        
+        Bundle demoModeBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsDemoModeEnabled");
+        if (demoModeBundle != null) {
+            displayBundleContents("Demo Mode", demoModeBundle, "  ");
+        }
+        
+        // Check if satellite is supported before proceeding
+        Boolean isSupported = null;
+        if (supportedBundle != null && supportedBundle.containsKey("satellite_supported")) {
+            isSupported = supportedBundle.getBoolean("satellite_supported");
+        }
         
         if (isSupported != null && !isSupported) {
             System.out.println("\n" + StatusEmojis.ERROR + " Satellite is not supported on this device");
             return;
+        }
+        
+        // Check for disallowed reasons before attempting to enable
+        int[] disallowedReasons = telephonyManager.getSatelliteDisallowedReasons();
+        if (disallowedReasons != null && disallowedReasons.length > 0) {
+            System.out.println("\n" + StatusEmojis.ERROR + " Satellite operations are currently disallowed:");
+            displayDisallowedReasons(disallowedReasons);
         }
         
         // Prompt user for action
@@ -843,7 +984,7 @@ public class ShellMain {
         
         try {
             // Enable satellite with demo mode
-            int result = telephonyManager.requestSatelliteEnabled(true, true, false);
+            int result = telephonyManager.requestSatelliteEnabled(true, false, false);
             
             switch (result) {
                 case 0:
@@ -896,6 +1037,7 @@ public class ShellMain {
                     break;
                 case 16:
                     System.out.println(StatusEmojis.ERROR + " Not allowed");
+                    displaySatelliteDisallowedReasons(telephonyManager);
                     break;
                 case 17:
                     System.out.println(StatusEmojis.ERROR + " Aborted");
@@ -908,19 +1050,87 @@ public class ShellMain {
             // Check status again after operation
             if (result == 0) {
                 Thread.sleep(1000); // Give it a moment to apply
-                Boolean newDemoMode = telephonyManager.requestIsDemoModeEnabled();
-                Boolean newEnabled = telephonyManager.requestIsSatelliteEnabled();
                 
                 System.out.println("\nNew Status:");
-                System.out.printf("  - Satellite enabled: %s%n", 
-                    newEnabled != null ? (newEnabled ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
-                System.out.printf("  - Demo mode enabled: %s%n", 
-                    newDemoMode != null ? (newDemoMode ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+                
+                Bundle newEnabledBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteEnabled");
+                if (newEnabledBundle != null) {
+                    displayBundleContents("Satellite Enabled", newEnabledBundle, "  ");
+                }
+                
+                Bundle newDemoModeBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsDemoModeEnabled");
+                if (newDemoModeBundle != null) {
+                    displayBundleContents("Demo Mode", newDemoModeBundle, "  ");
+                }
             }
             
         } catch (Exception e) {
             Ln.e("Error enabling satellite demo mode", e);
             System.out.println(StatusEmojis.ERROR + " Failed to enable satellite demo mode");
+        }
+    }
+    
+    private static void displaySatelliteDisallowedReasons(TelephonyManager telephonyManager) {
+        int[] reasons = telephonyManager.getSatelliteDisallowedReasons();
+        if (reasons != null && reasons.length > 0) {
+            System.out.println("\n  Satellite is disallowed for the following reasons:");
+            displayDisallowedReasons(reasons);
+        }
+    }
+    
+    private static void displayDisallowedReasons(int[] reasons) {
+        for (int reason : reasons) {
+            String reasonText = getSatelliteDisallowedReasonText(reason);
+            System.out.printf("    - %s (code: %d)%n", reasonText, reason);
+        }
+    }
+    
+    private static String getSatelliteDisallowedReasonText(int reason) {
+        switch (reason) {
+            case 0:
+                return "Location not supported";
+            case 1:
+                return "Entitlement not provisioned";
+            case 2:
+                return "Device not provisioned";
+            case 3:
+                return "Carrier not supported";
+            case 4:
+                return "Satellite device communication not allowed";
+            case 5:
+                return "Satellite not reachable";
+            case 6:
+                return "Cellular service available";
+            case 7:
+                return "Emergency call in progress";
+            case 8:
+                return "Airplane mode enabled";
+            case 9:
+                return "Satellite mode disabled";
+            case 10:
+                return "Subscription not active";
+            case 11:
+                return "Invalid subscription";
+            case 12:
+                return "Roaming not allowed";
+            case 13:
+                return "User not authorized";
+            case 14:
+                return "Device capabilities insufficient";
+            case 15:
+                return "Network congestion";
+            case 16:
+                return "Service temporarily unavailable";
+            case 17:
+                return "Hardware failure";
+            case 18:
+                return "Software failure";
+            case 19:
+                return "Regulatory restriction";
+            case 20:
+                return "SIM not present";
+            default:
+                return "Unknown reason";
         }
     }
     
