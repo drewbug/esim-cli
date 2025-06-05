@@ -7,6 +7,7 @@ import com.genymobile.scrcpy.wrappers.TelephonyManager;
 import com.genymobile.scrcpy.Ln;
 import com.genymobile.scrcpy.FakeContext;
 
+import android.os.Bundle;
 import android.os.IInterface;
 import android.telephony.SubscriptionInfo;
 import android.telephony.euicc.DownloadableSubscription;
@@ -39,12 +40,14 @@ public class ShellMain {
     private static final class MenuOptions {
         static final String ACTIVATE_EXISTING = "1";
         static final String DOWNLOAD_NEW = "2";
-        static final String EXIT = "3";
+        static final String SATELLITE_DEMO_MODE = "3";
+        static final String EXIT = "4";
     }
     
     private static final class StatusEmojis {
         static final String SUBSCRIPTIONS = "📶";
         static final String TELEPHONY = "📡";
+        static final String SATELLITE = "🛰️";
         static final String VALIDATED = "✅";
         static final String HOME = "🏠";
         static final String ROAMING = "✈️";
@@ -101,7 +104,8 @@ public class ShellMain {
     private static void displayMenuOptions() {
         System.out.println("1. Activate an existing eSIM profile");
         System.out.println("2. Download a new eSIM profile");
-        System.out.println("3. Exit");
+        System.out.println("3. Enable satellite demo mode");
+        System.out.println("4. Exit");
         System.out.print("\nChoose an option: ");
     }
     
@@ -112,6 +116,9 @@ public class ShellMain {
                 return false;
             case MenuOptions.DOWNLOAD_NEW:
                 activateNewProfile();
+                return false;
+            case MenuOptions.SATELLITE_DEMO_MODE:
+                enableSatelliteDemoMode();
                 return false;
             case MenuOptions.EXIT:
                 System.out.println("Exiting...");
@@ -614,6 +621,9 @@ public class ShellMain {
         for (Map.Entry<String, Object[]> methodEntry : capabilityMethods.entrySet()) {
             displayTelephonyCapability(telephony, methodEntry.getKey(), methodEntry.getValue());
         }
+        
+        // Display satellite capabilities
+        displaySatelliteCapabilities();
     }
     
     private static Map<String, Object[]> createTelephonyCapabilityMethods(int subscriptionId) {
@@ -654,6 +664,82 @@ public class ShellMain {
         } catch (Exception e) {
             Ln.e("Reflection error: " + methodName, e);
             System.out.printf("  - %s: %s%n", methodName, StatusEmojis.ERROR);
+        }
+    }
+
+    private static void displaySatelliteCapabilities() {
+        System.out.println("\n  Satellite Status:");
+        
+        try {
+            TelephonyManager telephonyManager = ServiceManager.getTelephonyManager();
+            if (telephonyManager == null) {
+                System.out.println("    - Satellite status: " + StatusEmojis.ERROR + " (TelephonyManager unavailable)");
+                return;
+            }
+            
+            // Display basic satellite status
+            Boolean isSupported = telephonyManager.requestIsSatelliteSupported();
+            Boolean isEnabled = telephonyManager.requestIsSatelliteEnabled();
+            Boolean isProvisioned = telephonyManager.requestIsSatelliteProvisioned();
+            Boolean isDemoMode = telephonyManager.requestIsDemoModeEnabled();
+            Integer nbIotSubscriptionId = telephonyManager.requestSelectedNbIotSatelliteSubscriptionId();
+            
+            System.out.printf("    - Satellite supported: %s%n", 
+                isSupported != null ? (isSupported ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
+            System.out.printf("    - Satellite enabled: %s%n", 
+                isEnabled != null ? (isEnabled ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
+            System.out.printf("    - Satellite provisioned: %s%n", 
+                isProvisioned != null ? (isProvisioned ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
+            System.out.printf("    - Demo mode enabled: %s%n", 
+                isDemoMode != null ? (isDemoMode ? StatusEmojis.YES : StatusEmojis.NO) : StatusEmojis.ERROR + " (Unknown)");
+            System.out.printf("    - NB-IoT satellite subscription ID: %s%n", 
+                nbIotSubscriptionId != null ? nbIotSubscriptionId : StatusEmojis.ERROR + " (Unknown)");
+            
+            // Display detailed capabilities if available
+            Bundle satelliteCapabilities = telephonyManager.requestSatelliteCapabilities();
+            if (satelliteCapabilities != null && !satelliteCapabilities.isEmpty()) {
+                System.out.println("\n  Satellite Capabilities:");
+                
+                // Common satellite capability keys based on Android documentation
+                String[] capabilityKeys = {
+                    "satellite_supported",
+                    "satellite_pointing_ui_supported", 
+                    "satellite_emergency_mode_supported",
+                    "satellite_demo_mode_supported",
+                    "max_bytes_per_out_going_datagram",
+                    "antenna_position_keys",
+                    "supported_radio_technologies"
+                };
+                
+                boolean hasCapabilities = false;
+                for (String key : capabilityKeys) {
+                    if (satelliteCapabilities.containsKey(key)) {
+                        hasCapabilities = true;
+                        Object value = satelliteCapabilities.get(key);
+                        if (value instanceof Boolean) {
+                            System.out.printf("    - %s: %s%n", key, (Boolean) value ? StatusEmojis.YES : StatusEmojis.NO);
+                        } else {
+                            System.out.printf("    - %s: %s%n", key, value);
+                        }
+                    }
+                }
+                
+                // If no known keys were found, display all keys in the bundle
+                if (!hasCapabilities) {
+                    for (String key : satelliteCapabilities.keySet()) {
+                        Object value = satelliteCapabilities.get(key);
+                        if (value instanceof Boolean) {
+                            System.out.printf("    - %s: %s%n", key, (Boolean) value ? StatusEmojis.YES : StatusEmojis.NO);
+                        } else {
+                            System.out.printf("    - %s: %s%n", key, value);
+                        }
+                    }
+                }
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error retrieving satellite information", e);
+            System.out.println("    - Satellite status: " + StatusEmojis.ERROR + " (Error occurred)");
         }
     }
 
@@ -713,6 +799,128 @@ public class ShellMain {
             handleProfileActivationResult(result, "new profile");
         } catch (Exception e) {
             Ln.e("Error activating new profile", e);
+        }
+    }
+    
+    private static void enableSatelliteDemoMode() {
+        System.out.println("\n" + StatusEmojis.SATELLITE + " Satellite Demo Mode Configuration\n");
+        
+        // First check current satellite status
+        TelephonyManager telephonyManager = ServiceManager.getTelephonyManager();
+        if (telephonyManager == null) {
+            System.out.println(StatusEmojis.ERROR + " TelephonyManager unavailable");
+            return;
+        }
+        
+        // Display current status
+        Boolean isSupported = telephonyManager.requestIsSatelliteSupported();
+        Boolean isEnabled = telephonyManager.requestIsSatelliteEnabled();
+        Boolean isDemoMode = telephonyManager.requestIsDemoModeEnabled();
+        
+        System.out.println("Current Status:");
+        System.out.printf("  - Satellite supported: %s%n", 
+            isSupported != null ? (isSupported ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+        System.out.printf("  - Satellite enabled: %s%n", 
+            isEnabled != null ? (isEnabled ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+        System.out.printf("  - Demo mode enabled: %s%n", 
+            isDemoMode != null ? (isDemoMode ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+        
+        if (isSupported != null && !isSupported) {
+            System.out.println("\n" + StatusEmojis.ERROR + " Satellite is not supported on this device");
+            return;
+        }
+        
+        // Prompt user for action
+        System.out.print("\nEnable satellite demo mode? (y/n): ");
+        String choice = scanner.nextLine().trim().toLowerCase();
+        
+        if (!choice.equals("y")) {
+            System.out.println("Operation cancelled.");
+            return;
+        }
+        
+        System.out.println("\nEnabling satellite demo mode...");
+        
+        try {
+            // Enable satellite with demo mode
+            int result = telephonyManager.requestSatelliteEnabled(true, true, false);
+            
+            switch (result) {
+                case 0:
+                    System.out.println(StatusEmojis.YES + " Satellite demo mode enabled successfully!");
+                    break;
+                case 1:
+                    System.out.println(StatusEmojis.ERROR + " Request in progress, please wait...");
+                    break;
+                case 2:
+                    System.out.println(StatusEmojis.ERROR + " Modem error occurred");
+                    break;
+                case 3:
+                    System.out.println(StatusEmojis.ERROR + " Invalid telephony state");
+                    break;
+                case 4:
+                    System.out.println(StatusEmojis.ERROR + " Invalid modem state");
+                    break;
+                case 5:
+                    System.out.println(StatusEmojis.ERROR + " Request failed");
+                    break;
+                case 6:
+                    System.out.println(StatusEmojis.ERROR + " Radio not available");
+                    break;
+                case 7:
+                    System.out.println(StatusEmojis.ERROR + " Request not supported");
+                    break;
+                case 8:
+                    System.out.println(StatusEmojis.ERROR + " Service provision in progress");
+                    break;
+                case 9:
+                    System.out.println(StatusEmojis.ERROR + " Service not provisioned");
+                    break;
+                case 10:
+                    System.out.println(StatusEmojis.ERROR + " Network error");
+                    break;
+                case 11:
+                    System.out.println(StatusEmojis.ERROR + " No resources available");
+                    break;
+                case 12:
+                    System.out.println(StatusEmojis.ERROR + " Request cancelled");
+                    break;
+                case 13:
+                    System.out.println(StatusEmojis.ERROR + " Access barred");
+                    break;
+                case 14:
+                    System.out.println(StatusEmojis.ERROR + " Network timeout");
+                    break;
+                case 15:
+                    System.out.println(StatusEmojis.ERROR + " Not reachable");
+                    break;
+                case 16:
+                    System.out.println(StatusEmojis.ERROR + " Not allowed");
+                    break;
+                case 17:
+                    System.out.println(StatusEmojis.ERROR + " Aborted");
+                    break;
+                default:
+                    System.out.println(StatusEmojis.ERROR + " Unknown error code: " + result);
+                    break;
+            }
+            
+            // Check status again after operation
+            if (result == 0) {
+                Thread.sleep(1000); // Give it a moment to apply
+                Boolean newDemoMode = telephonyManager.requestIsDemoModeEnabled();
+                Boolean newEnabled = telephonyManager.requestIsSatelliteEnabled();
+                
+                System.out.println("\nNew Status:");
+                System.out.printf("  - Satellite enabled: %s%n", 
+                    newEnabled != null ? (newEnabled ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+                System.out.printf("  - Demo mode enabled: %s%n", 
+                    newDemoMode != null ? (newDemoMode ? StatusEmojis.YES : StatusEmojis.NO) : "Unknown");
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error enabling satellite demo mode", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to enable satellite demo mode");
         }
     }
     
