@@ -57,4 +57,16 @@ public final class ServiceManager {
         }
         return connectivityManager;
     }
+
+    public static boolean isRilAvailable() {
+        return RIL.isRilAvailable();
+    }
+
+    public static Object getRadioServiceProxy() {
+        return RIL.getRadioServiceProxy();
+    }
+
+    public static Object getRadioServiceProxy(int service) {
+        return RIL.getRadioServiceProxy(service);
+    }
 }

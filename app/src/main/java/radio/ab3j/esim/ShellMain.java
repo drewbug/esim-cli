@@ -9,6 +9,8 @@ import com.genymobile.scrcpy.FakeContext;
 
 import android.os.Bundle;
 import android.os.IInterface;
+import android.os.Parcel;
+import android.os.PersistableBundle;
 import android.telephony.SubscriptionInfo;
 import android.telephony.euicc.DownloadableSubscription;
 
@@ -31,6 +33,8 @@ public class ShellMain {
     private static final String TELEPHONY_INTERFACE = "com.android.internal.telephony.ITelephony";
     private static final String SUBSCRIPTION_SERVICE = "isub";
     private static final String SUBSCRIPTION_INTERFACE = "com.android.internal.telephony.ISub";
+    private static final String CARRIER_CONFIG_SERVICE = "carrier_config";
+    private static final String CARRIER_CONFIG_INTERFACE = "com.android.internal.telephony.ICarrierConfigLoader";
     private static final String STATUS_SEPARATOR = "=" + "=".repeat(59);
     private static final String UNAVAILABLE_PHONE = "Not available";
     private static final String UNKNOWN_PLACEHOLDER = "???????"; 
@@ -42,7 +46,10 @@ public class ShellMain {
         static final String DOWNLOAD_NEW = "2";
         static final String SATELLITE_DEMO_MODE = "3";
         static final String DUMP_TELEPHONY_METHODS = "4";
-        static final String EXIT = "5";
+        static final String DUMP_CARRIER_CONFIG = "5";
+        static final String SELECT_NETWORK_OPERATOR = "6";
+        static final String TEST_RIL_RADIO_SERVICE = "7";
+        static final String EXIT = "8";
     }
     
     private static final class StatusEmojis {
@@ -82,6 +89,7 @@ public class ShellMain {
         try {
             printActiveSubscriptionsAndNetworks();
             printTelephonyStates();
+            printCarrierConfigurations();
         } catch (Exception e) {
             Ln.e("Error displaying system status", e);
         }
@@ -107,7 +115,10 @@ public class ShellMain {
         System.out.println("2. Download a new eSIM profile");
         System.out.println("3. Enable satellite demo mode");
         System.out.println("4. Dump ITelephony interface methods");
-        System.out.println("5. Exit");
+        System.out.println("5. Dump carrier configuration (all keys)");
+        System.out.println("6. Select network operator");
+        System.out.println("7. Test RIL Radio Service Proxy");
+        System.out.println("8. Exit");
         System.out.print("\nChoose an option: ");
     }
     
@@ -124,6 +135,15 @@ public class ShellMain {
                 return false;
             case MenuOptions.DUMP_TELEPHONY_METHODS:
                 dumpTelephonyMethods();
+                return false;
+            case MenuOptions.DUMP_CARRIER_CONFIG:
+                dumpCarrierConfiguration();
+                return false;
+            case MenuOptions.SELECT_NETWORK_OPERATOR:
+                selectNetworkOperator();
+                return false;
+            case MenuOptions.TEST_RIL_RADIO_SERVICE:
+                testRilRadioServiceProxy();
                 return false;
             case MenuOptions.EXIT:
                 System.out.println("Exiting...");
@@ -620,6 +640,144 @@ public class ShellMain {
         displayTelephonyCapabilities(telephony, activeSubscriptionId);
     }
     
+    private static void printCarrierConfigurations() {
+        try {
+            IInterface carrierConfigLoader = ServiceManager.getService(CARRIER_CONFIG_SERVICE, CARRIER_CONFIG_INTERFACE);
+            if (carrierConfigLoader == null) {
+                System.out.println("\n📱 Carrier Configuration: Service unavailable");
+                return;
+            }
+            
+            SubscriptionService subscriptionService = ServiceManager.getSubscriptionService();
+            if (subscriptionService == null) {
+                System.out.println("\n📱 Carrier Configuration: Subscription service unavailable");
+                return;
+            }
+            
+            List<SubscriptionInfo> availableSubscriptions = subscriptionService.getAvailableSubscriptionInfoList();
+            if (availableSubscriptions == null || availableSubscriptions.isEmpty()) {
+                System.out.println("\n📱 Carrier Configuration: No subscriptions found");
+                return;
+            }
+            
+            System.out.println("\n📱 Carrier Configuration (per subscription):");
+            
+            for (SubscriptionInfo subscription : availableSubscriptions) {
+                displayCarrierConfigForSubscription(carrierConfigLoader, subscription);
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error printing carrier configurations", e);
+            System.out.println("\n📱 Carrier Configuration: Error accessing service");
+        }
+    }
+    
+    private static void displayCarrierConfigForSubscription(IInterface carrierConfigLoader, SubscriptionInfo subscription) {
+        try {
+            int subId = subscription.getSubscriptionId();
+            String displayName = subscription.getDisplayName().toString();
+            
+            System.out.printf("\n  %s (SubId: %d):%n", displayName, subId);
+            
+            // Try different method signatures for getConfigForSubId
+            Object configBundle = null;
+            
+            // First try: getConfigForSubId(int subId, String callingPackage)
+            try {
+                Method getConfigMethod = carrierConfigLoader.getClass().getMethod("getConfigForSubId", int.class, String.class);
+                configBundle = getConfigMethod.invoke(carrierConfigLoader, subId, CALLING_PACKAGE);
+            } catch (NoSuchMethodException e) {
+                // Second try: getConfigForSubId(int subId)
+                try {
+                    Method getConfigMethod = carrierConfigLoader.getClass().getMethod("getConfigForSubId", int.class);
+                    configBundle = getConfigMethod.invoke(carrierConfigLoader, subId);
+                } catch (NoSuchMethodException e2) {
+                    System.out.println("    - getConfigForSubId method not found");
+                    return;
+                }
+            }
+            
+            if (configBundle == null) {
+                System.out.println("    - No carrier configuration available (null returned)");
+            } else if (configBundle instanceof PersistableBundle) {
+                PersistableBundle bundle = (PersistableBundle) configBundle;
+                if (bundle.isEmpty()) {
+                    System.out.println("    - No carrier configuration available (empty bundle)");
+                } else {
+                    System.out.println("    - Configuration keys found: " + bundle.size());
+                    
+                    // Display first 10 key-value pairs as examples
+                    int count = 0;
+                    for (String key : bundle.keySet()) {
+                        if (count >= 10) {
+                            System.out.println("    - ... and " + (bundle.size() - 10) + " more configuration entries");
+                            break;
+                        }
+                        Object value = bundle.get(key);
+                        System.out.printf("    - %s = %s%n", key, formatConfigValue(value));
+                        count++;
+                    }
+                }
+            } else if (configBundle instanceof Bundle) {
+                Bundle bundle = (Bundle) configBundle;
+                if (bundle.isEmpty()) {
+                    System.out.println("    - No carrier configuration available (empty bundle)");
+                } else {
+                    System.out.println("    - Configuration keys found: " + bundle.size());
+                    
+                    // Display first 10 key-value pairs as examples
+                    int count = 0;
+                    for (String key : bundle.keySet()) {
+                        if (count >= 10) {
+                            System.out.println("    - ... and " + (bundle.size() - 10) + " more configuration entries");
+                            break;
+                        }
+                        Object value = bundle.get(key);
+                        System.out.printf("    - %s = %s%n", key, formatConfigValue(value));
+                        count++;
+                    }
+                }
+            } else {
+                System.out.println("    - Unable to retrieve configuration (unexpected type: " + configBundle.getClass().getName() + ")");
+            }
+            
+        } catch (Exception e) {
+            System.out.println("    - Error retrieving configuration: " + e.getMessage());
+            Ln.e("Error getting carrier config for subscription " + subscription.getSubscriptionId(), e);
+        }
+    }
+    
+    private static String formatConfigValue(Object value) {
+        if (value == null) {
+            return "null";
+        } else if (value instanceof Boolean) {
+            return value.toString();
+        } else if (value instanceof Integer || value instanceof Long) {
+            return value.toString();
+        } else if (value instanceof String) {
+            String str = (String) value;
+            if (str.length() > 100) {
+                return str.substring(0, 97) + "...";
+            }
+            return str;
+        } else if (value.getClass().isArray()) {
+            // Handle different array types
+            if (value instanceof int[]) {
+                return Arrays.toString((int[]) value);
+            } else if (value instanceof String[]) {
+                return Arrays.toString((String[]) value);
+            } else if (value instanceof boolean[]) {
+                return Arrays.toString((boolean[]) value);
+            } else if (value instanceof long[]) {
+                return Arrays.toString((long[]) value);
+            } else {
+                return "[Array of " + value.getClass().getComponentType().getSimpleName() + "]";
+            }
+        } else {
+            return value.getClass().getSimpleName() + ": " + value.toString();
+        }
+    }
+    
     private static void displayTelephonyCapabilities(IInterface telephony, int subscriptionId) {
         Map<String, Object[]> capabilityMethods = createTelephonyCapabilityMethods(subscriptionId);
         
@@ -804,6 +962,46 @@ public class ShellMain {
                 }
             }
             
+            // Special handling for network operator methods
+            if (("getNetworkOperator".equals(method) || "getNetworkOperatorName".equals(method)) && args.length == 0) {
+                // Try with calling package parameter
+                try {
+                    Method m = srv.getClass().getMethod(method, String.class);
+                    return (String) m.invoke(srv, CALLING_PACKAGE);
+                } catch (NoSuchMethodException e) {
+                    // Try without parameters
+                    try {
+                        Method m = srv.getClass().getMethod(method);
+                        return (String) m.invoke(srv);
+                    } catch (NoSuchMethodException e2) {
+                        return null;
+                    }
+                }
+            }
+            
+            // Special handling for getNetworkOperatorForPhone methods
+            if (("getNetworkOperatorForPhone".equals(method) || "getNetworkOperatorNameForPhone".equals(method)) && args.length == 1) {
+                // Try with phoneId parameter only
+                try {
+                    Method m = srv.getClass().getMethod(method, int.class);
+                    return (String) m.invoke(srv, args[0]);
+                } catch (NoSuchMethodException e) {
+                    // Try with phoneId and calling package
+                    try {
+                        Method m = srv.getClass().getMethod(method, int.class, String.class);
+                        return (String) m.invoke(srv, args[0], CALLING_PACKAGE);
+                    } catch (NoSuchMethodException e2) {
+                        // Try with phoneId, calling package, and feature id
+                        try {
+                            Method m = srv.getClass().getMethod(method, int.class, String.class, String.class);
+                            return (String) m.invoke(srv, args[0], CALLING_PACKAGE, null);
+                        } catch (NoSuchMethodException e3) {
+                            return null;
+                        }
+                    }
+                }
+            }
+            
             Class<?>[] types = Arrays.stream(args)
                     .map(a -> a instanceof Integer ? int.class : String.class)
                     .toArray(Class[]::new);
@@ -925,145 +1123,157 @@ public class ShellMain {
         }
     }
     
-    private static void enableSatelliteDemoMode() {
-        System.out.println("\n" + StatusEmojis.SATELLITE + " Satellite Demo Mode Configuration\n");
-        
-        // First check current satellite status
-        TelephonyManager telephonyManager = ServiceManager.getTelephonyManager();
-        if (telephonyManager == null) {
-            System.out.println(StatusEmojis.ERROR + " TelephonyManager unavailable");
-            return;
-        }
-        
-        // Display current status - show all keys from bundles
-        System.out.println("Current Status:");
-        
-        Bundle supportedBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteSupported");
-        if (supportedBundle != null) {
-            displayBundleContents("Satellite Supported", supportedBundle, "  ");
-        }
-        
-        Bundle enabledBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteEnabled");
-        if (enabledBundle != null) {
-            displayBundleContents("Satellite Enabled", enabledBundle, "  ");
-        }
-        
-        Bundle demoModeBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsDemoModeEnabled");
-        if (demoModeBundle != null) {
-            displayBundleContents("Demo Mode", demoModeBundle, "  ");
-        }
-        
-        // Check if satellite is supported before proceeding
-        Boolean isSupported = null;
-        if (supportedBundle != null && supportedBundle.containsKey("satellite_supported")) {
-            isSupported = supportedBundle.getBoolean("satellite_supported");
-        }
-        
-        if (isSupported != null && !isSupported) {
-            System.out.println("\n" + StatusEmojis.ERROR + " Satellite is not supported on this device");
-            return;
-        }
-        
-        // Check for disallowed reasons before attempting to enable
-        int[] disallowedReasons = telephonyManager.getSatelliteDisallowedReasons();
-        if (disallowedReasons != null && disallowedReasons.length > 0) {
-            System.out.println("\n" + StatusEmojis.ERROR + " Satellite operations are currently disallowed:");
-            displayDisallowedReasons(disallowedReasons);
-        }
-        
-        // Prompt user for action
-        System.out.print("\nEnable satellite demo mode? (y/n): ");
-        String choice = scanner.nextLine().trim().toLowerCase();
-        
-        if (!choice.equals("y")) {
-            System.out.println("Operation cancelled.");
-            return;
-        }
-        
-        System.out.println("\nEnabling satellite demo mode...");
+    private static void dumpCarrierConfiguration() {
+        System.out.println("\n📱 Carrier Configuration Full Dump\n");
         
         try {
+            IInterface carrierConfigLoader = ServiceManager.getService(CARRIER_CONFIG_SERVICE, CARRIER_CONFIG_INTERFACE);
+            if (carrierConfigLoader == null) {
+                System.out.println(StatusEmojis.ERROR + " Could not get ICarrierConfigLoader service");
+                return;
+            }
+            
+            // First, let's dump the available methods
+            System.out.println("ICarrierConfigLoader Methods:");
+            System.out.println(STATUS_SEPARATOR);
+            Method[] methods = carrierConfigLoader.getClass().getMethods();
+            for (Method method : methods) {
+                if (!method.getDeclaringClass().equals(Object.class)) {
+                    StringBuilder sig = new StringBuilder();
+                    sig.append("  ").append(method.getName()).append("(");
+                    Class<?>[] params = method.getParameterTypes();
+                    for (int i = 0; i < params.length; i++) {
+                        if (i > 0) sig.append(", ");
+                        sig.append(params[i].getSimpleName());
+                    }
+                    sig.append(") → ").append(method.getReturnType().getSimpleName());
+                    System.out.println(sig.toString());
+                }
+            }
+            System.out.println(STATUS_SEPARATOR);
+            
+            SubscriptionService subscriptionService = ServiceManager.getSubscriptionService();
+            if (subscriptionService == null) {
+                System.out.println(StatusEmojis.ERROR + " Subscription service unavailable");
+                return;
+            }
+            
+            List<SubscriptionInfo> availableSubscriptions = subscriptionService.getAvailableSubscriptionInfoList();
+            if (availableSubscriptions == null || availableSubscriptions.isEmpty()) {
+                System.out.println("No subscriptions found");
+                return;
+            }
+            
+            System.out.println("\nCarrier Configuration by Subscription:");
+            
+            for (SubscriptionInfo subscription : availableSubscriptions) {
+                dumpFullCarrierConfigForSubscription(carrierConfigLoader, subscription);
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error dumping carrier configuration", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to dump carrier configuration");
+        }
+    }
+    
+    private static void dumpFullCarrierConfigForSubscription(IInterface carrierConfigLoader, SubscriptionInfo subscription) {
+        try {
+            int subId = subscription.getSubscriptionId();
+            String displayName = subscription.getDisplayName().toString();
+            
+            System.out.println("\n" + STATUS_SEPARATOR);
+            System.out.printf("%s (SubId: %d):%n", displayName, subId);
+            System.out.println(STATUS_SEPARATOR);
+            
+            // Try different method signatures for getConfigForSubId
+            Object configBundle = null;
+            
+            // First try: getConfigForSubId(int subId, String callingPackage)
+            try {
+                Method getConfigMethod = carrierConfigLoader.getClass().getMethod("getConfigForSubId", int.class, String.class);
+                configBundle = getConfigMethod.invoke(carrierConfigLoader, subId, CALLING_PACKAGE);
+            } catch (NoSuchMethodException e) {
+                // Second try: getConfigForSubId(int subId)
+                try {
+                    Method getConfigMethod = carrierConfigLoader.getClass().getMethod("getConfigForSubId", int.class);
+                    configBundle = getConfigMethod.invoke(carrierConfigLoader, subId);
+                } catch (NoSuchMethodException e2) {
+                    System.out.println("getConfigForSubId method not found");
+                    return;
+                }
+            }
+            
+            if (configBundle == null) {
+                System.out.println("No carrier configuration available (null returned)");
+            } else if (configBundle instanceof PersistableBundle) {
+                PersistableBundle bundle = (PersistableBundle) configBundle;
+                dumpPersistableBundle(bundle);
+            } else if (configBundle instanceof Bundle) {
+                Bundle bundle = (Bundle) configBundle;
+                dumpBundle(bundle);
+            } else {
+                System.out.println("Unable to retrieve configuration (unexpected type: " + configBundle.getClass().getName());
+            }
+            
+        } catch (Exception e) {
+            System.out.println("Error retrieving configuration: " + e.getMessage());
+            Ln.e("Error dumping carrier config for subscription " + subscription.getSubscriptionId(), e);
+        }
+    }
+    
+    private static void dumpPersistableBundle(PersistableBundle bundle) {
+        if (bundle.isEmpty()) {
+            System.out.println("No carrier configuration available (empty bundle)");
+        } else {
+            System.out.println("Configuration entries: " + bundle.size());
+            System.out.println();
+            
+            // Sort keys alphabetically
+            List<String> sortedKeys = new ArrayList<>(bundle.keySet());
+            java.util.Collections.sort(sortedKeys);
+            
+            for (String key : sortedKeys) {
+                Object value = bundle.get(key);
+                System.out.printf("  %s = %s%n", key, formatConfigValue(value));
+            }
+        }
+    }
+    
+    private static void dumpBundle(Bundle bundle) {
+        if (bundle.isEmpty()) {
+            System.out.println("No carrier configuration available (empty bundle)");
+        } else {
+            System.out.println("Configuration entries: " + bundle.size());
+            System.out.println();
+            
+            // Sort keys alphabetically
+            List<String> sortedKeys = new ArrayList<>(bundle.keySet());
+            java.util.Collections.sort(sortedKeys);
+            
+            for (String key : sortedKeys) {
+                Object value = bundle.get(key);
+                System.out.printf("  %s = %s%n", key, formatConfigValue(value));
+            }
+        }
+    }
+    
+    private static void enableSatelliteDemoMode() {
+        try {
+            TelephonyManager telephonyManager = ServiceManager.getTelephonyManager();
+            if (telephonyManager == null) {
+                System.out.println(StatusEmojis.ERROR + " TelephonyManager unavailable");
+                return;
+            }
+
+            int[] disallowedReasons = telephonyManager.getSatelliteDisallowedReasons();
+            if (disallowedReasons != null && disallowedReasons.length > 0) {
+                System.out.println("\n" + StatusEmojis.ERROR + " Satellite operations are currently disallowed:");
+                displayDisallowedReasons(disallowedReasons);
+            }
+
             // Enable satellite with demo mode
             int result = telephonyManager.requestSatelliteEnabled(true, false, false);
-            
-            switch (result) {
-                case 0:
-                    System.out.println(StatusEmojis.YES + " Satellite demo mode enabled successfully!");
-                    break;
-                case 1:
-                    System.out.println(StatusEmojis.ERROR + " Request in progress, please wait...");
-                    break;
-                case 2:
-                    System.out.println(StatusEmojis.ERROR + " Modem error occurred");
-                    break;
-                case 3:
-                    System.out.println(StatusEmojis.ERROR + " Invalid telephony state");
-                    break;
-                case 4:
-                    System.out.println(StatusEmojis.ERROR + " Invalid modem state");
-                    break;
-                case 5:
-                    System.out.println(StatusEmojis.ERROR + " Request failed");
-                    break;
-                case 6:
-                    System.out.println(StatusEmojis.ERROR + " Radio not available");
-                    break;
-                case 7:
-                    System.out.println(StatusEmojis.ERROR + " Request not supported");
-                    break;
-                case 8:
-                    System.out.println(StatusEmojis.ERROR + " Service provision in progress");
-                    break;
-                case 9:
-                    System.out.println(StatusEmojis.ERROR + " Service not provisioned");
-                    break;
-                case 10:
-                    System.out.println(StatusEmojis.ERROR + " Network error");
-                    break;
-                case 11:
-                    System.out.println(StatusEmojis.ERROR + " No resources available");
-                    break;
-                case 12:
-                    System.out.println(StatusEmojis.ERROR + " Request cancelled");
-                    break;
-                case 13:
-                    System.out.println(StatusEmojis.ERROR + " Access barred");
-                    break;
-                case 14:
-                    System.out.println(StatusEmojis.ERROR + " Network timeout");
-                    break;
-                case 15:
-                    System.out.println(StatusEmojis.ERROR + " Not reachable");
-                    break;
-                case 16:
-                    System.out.println(StatusEmojis.ERROR + " Not allowed");
-                    displaySatelliteDisallowedReasons(telephonyManager);
-                    break;
-                case 17:
-                    System.out.println(StatusEmojis.ERROR + " Aborted");
-                    break;
-                default:
-                    System.out.println(StatusEmojis.ERROR + " Unknown error code: " + result);
-                    break;
-            }
-            
-            // Check status again after operation
-            if (result == 0) {
-                Thread.sleep(1000); // Give it a moment to apply
-                
-                System.out.println("\nNew Status:");
-                
-                Bundle newEnabledBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsSatelliteEnabled");
-                if (newEnabledBundle != null) {
-                    displayBundleContents("Satellite Enabled", newEnabledBundle, "  ");
-                }
-                
-                Bundle newDemoModeBundle = telephonyManager.invokeSatelliteMethodWithResultReceiver("requestIsDemoModeEnabled");
-                if (newDemoModeBundle != null) {
-                    displayBundleContents("Demo Mode", newDemoModeBundle, "  ");
-                }
-            }
-            
+            System.out.printf("requestSatelliteEnabled result: %d\n", result);
         } catch (Exception e) {
             Ln.e("Error enabling satellite demo mode", e);
             System.out.println(StatusEmojis.ERROR + " Failed to enable satellite demo mode");
@@ -1080,57 +1290,821 @@ public class ShellMain {
     
     private static void displayDisallowedReasons(int[] reasons) {
         for (int reason : reasons) {
-            String reasonText = getSatelliteDisallowedReasonText(reason);
-            System.out.printf("    - %s (code: %d)%n", reasonText, reason);
+            System.out.printf("(code: %d)%n", reason);
         }
     }
     
-    private static String getSatelliteDisallowedReasonText(int reason) {
-        switch (reason) {
-            case 0:
-                return "Location not supported";
-            case 1:
-                return "Entitlement not provisioned";
-            case 2:
-                return "Device not provisioned";
-            case 3:
-                return "Carrier not supported";
-            case 4:
-                return "Satellite device communication not allowed";
-            case 5:
-                return "Satellite not reachable";
-            case 6:
-                return "Cellular service available";
-            case 7:
-                return "Emergency call in progress";
-            case 8:
-                return "Airplane mode enabled";
-            case 9:
-                return "Satellite mode disabled";
-            case 10:
-                return "Subscription not active";
-            case 11:
-                return "Invalid subscription";
-            case 12:
-                return "Roaming not allowed";
-            case 13:
-                return "User not authorized";
-            case 14:
-                return "Device capabilities insufficient";
-            case 15:
-                return "Network congestion";
-            case 16:
-                return "Service temporarily unavailable";
-            case 17:
-                return "Hardware failure";
-            case 18:
-                return "Software failure";
-            case 19:
-                return "Regulatory restriction";
-            case 20:
-                return "SIM not present";
-            default:
-                return "Unknown reason";
+    private static void selectNetworkOperator() {
+        System.out.println("\n📡 Network Operator Selection\n");
+        
+        try {
+            // Get the active subscription ID for the network scan
+            int subId = getActiveSubscriptionId();
+            if (subId == -1) {
+                System.out.println(StatusEmojis.ERROR + " No active subscription found");
+                return;
+            }
+            
+            IInterface telephony = ServiceManager.getService(TELEPHONY_SERVICE, TELEPHONY_INTERFACE);
+            if (telephony == null) {
+                System.out.println(StatusEmojis.ERROR + " ITelephony service unavailable");
+                return;
+            }
+            
+            // First display current network operator
+            displayCurrentNetworkOperator(telephony, subId);
+            
+            System.out.println("\nOptions:");
+            System.out.println("1. Scan for available networks");
+            System.out.println("2. Set network selection mode to automatic");
+            System.out.println("3. Manually select a network from scan");
+            System.out.println("4. Manually connect to network by PLMN");
+            System.out.println("5. Debug: List network-related methods");
+            System.out.println("6. Back to main menu");
+            System.out.print("\nChoose an option: ");
+            
+            String choice = scanner.nextLine().trim();
+            
+            switch (choice) {
+                case "1":
+                    scanForNetworks(telephony, subId);
+                    break;
+                case "2":
+                    setAutomaticNetworkSelection(telephony, subId);
+                    break;
+                case "3":
+                    manuallySelectNetwork(telephony, subId);
+                    break;
+                case "4":
+                    manuallyConnectByPLMN(telephony, subId);
+                    break;
+                case "5":
+                    debugNetworkMethods(telephony);
+                    break;
+                case "6":
+                    return;
+                default:
+                    System.out.println("Invalid choice");
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error in network operator selection", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to access network operator functions");
+        }
+    }
+    
+    private static void testRilRadioServiceProxy() {
+        try {
+            System.out.println("\n📻 RIL Radio Service Proxy Test\n");
+            System.out.println(STATUS_SEPARATOR);
+            
+            // Check if RIL is available
+            if (!ServiceManager.isRilAvailable()) {
+                System.out.println(StatusEmojis.ERROR + " RIL class or instance not available");
+                System.out.println("This may be due to:");
+                System.out.println("  - Missing Android framework classes");
+                System.out.println("  - Insufficient permissions");
+                System.out.println("  - Device not supporting RIL access");
+                return;
+            }
+            
+            System.out.println(StatusEmojis.VALIDATED + " RIL is available");
+            
+            // Test getRadioServiceProxy with default HAL_SERVICE_NETWORK
+            System.out.println("\nTesting getRadioServiceProxy() [default HAL_SERVICE_NETWORK]:");
+            Object networkProxy = ServiceManager.getRadioServiceProxy();
+            if (networkProxy != null) {
+                System.out.println(StatusEmojis.VALIDATED + " Network service proxy obtained: " + networkProxy.getClass().getName());
+            } else {
+                System.out.println(StatusEmojis.ERROR + " Failed to get network service proxy");
+            }
+            
+            // Test different HAL service types
+            System.out.println("\nTesting different HAL service types:");
+            
+            // HAL_SERVICE_VOICE (0)
+            Object voiceProxy = ServiceManager.getRadioServiceProxy(0);
+            System.out.println("HAL_SERVICE_VOICE (0): " + 
+                (voiceProxy != null ? StatusEmojis.VALIDATED + " Available" : StatusEmojis.ERROR + " Not available"));
+            
+            // HAL_SERVICE_DATA (1) 
+            Object dataProxy = ServiceManager.getRadioServiceProxy(1);
+            System.out.println("HAL_SERVICE_DATA (1): " + 
+                (dataProxy != null ? StatusEmojis.VALIDATED + " Available" : StatusEmojis.ERROR + " Not available"));
+            
+            // HAL_SERVICE_NETWORK (2) - our default
+            Object networkProxy2 = ServiceManager.getRadioServiceProxy(2);
+            System.out.println("HAL_SERVICE_NETWORK (2): " + 
+                (networkProxy2 != null ? StatusEmojis.VALIDATED + " Available" : StatusEmojis.ERROR + " Not available"));
+            
+            // HAL_SERVICE_MESSAGING (3)
+            Object messagingProxy = ServiceManager.getRadioServiceProxy(3);
+            System.out.println("HAL_SERVICE_MESSAGING (3): " + 
+                (messagingProxy != null ? StatusEmojis.VALIDATED + " Available" : StatusEmojis.ERROR + " Not available"));
+            
+            System.out.println("\n" + STATUS_SEPARATOR);
+            System.out.println("Test completed. Default service is HAL_SERVICE_NETWORK (2)");
+            
+        } catch (Exception e) {
+            Ln.e("Error testing RIL Radio Service Proxy", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to test RIL Radio Service Proxy: " + e.getMessage());
+        }
+    }
+    
+    private static void debugNetworkMethods(IInterface telephony) {
+        System.out.println("\n🔍 Network-related methods available:");
+        System.out.println(STATUS_SEPARATOR);
+        
+        Method[] methods = telephony.getClass().getMethods();
+        java.util.Arrays.sort(methods, (m1, m2) -> m1.getName().compareTo(m2.getName()));
+        
+        for (Method method : methods) {
+            String methodName = method.getName();
+            if (methodName.toLowerCase().contains("network") || 
+                methodName.toLowerCase().contains("operator") ||
+                methodName.toLowerCase().contains("selection") ||
+                methodName.toLowerCase().contains("scan") ||
+                methodName.toLowerCase().contains("plmn")) {
+                
+                StringBuilder signature = new StringBuilder();
+                signature.append(methodName).append("(");
+                
+                Class<?>[] paramTypes = method.getParameterTypes();
+                for (int i = 0; i < paramTypes.length; i++) {
+                    if (i > 0) signature.append(", ");
+                    signature.append(paramTypes[i].getSimpleName());
+                }
+                signature.append(")");
+                
+                signature.append(" → ").append(method.getReturnType().getSimpleName());
+                System.out.println("  " + signature.toString());
+            }
+        }
+        System.out.println(STATUS_SEPARATOR);
+    }
+    
+    private static void displayCurrentNetworkOperator(IInterface telephony, int subId) {
+        try {
+            // Try multiple methods to get network operator info
+            String operatorNumeric = null;
+            String operatorName = null;
+            
+            // Method 1: Try with subId parameter
+            operatorNumeric = invokeTelephonyStringMethod(telephony, "getNetworkOperatorForPhone", subId);
+            operatorName = invokeTelephonyStringMethod(telephony, "getNetworkOperatorNameForPhone", subId);
+            
+            // Method 2: If that didn't work, try without subId
+            if ((operatorNumeric == null || operatorNumeric.isEmpty()) && 
+                (operatorName == null || operatorName.isEmpty())) {
+                operatorNumeric = invokeTelephonyStringMethod(telephony, "getNetworkOperator");
+                operatorName = invokeTelephonyStringMethod(telephony, "getNetworkOperatorName");
+            }
+            
+            // Method 3: Try with phoneId instead of subId
+            if ((operatorNumeric == null || operatorNumeric.isEmpty()) && 
+                (operatorName == null || operatorName.isEmpty())) {
+                // Get phoneId from subId
+                try {
+                    Method getPhoneIdMethod = telephony.getClass().getMethod("getPhoneId", int.class);
+                    int phoneId = (int) getPhoneIdMethod.invoke(telephony, subId);
+                    
+                    operatorNumeric = invokeTelephonyStringMethod(telephony, "getNetworkOperatorForPhone", phoneId);
+                    operatorName = invokeTelephonyStringMethod(telephony, "getNetworkOperatorNameForPhone", phoneId);
+                } catch (Exception e) {
+                    // Ignore, try next method
+                }
+            }
+            
+            // Display the results
+            if (operatorName != null && !operatorName.isEmpty() && !operatorName.equals("")) {
+                System.out.println("Current Network Operator: " + operatorName);
+                if (operatorNumeric != null && !operatorNumeric.isEmpty()) {
+                    System.out.println("Operator Code (MCC+MNC): " + operatorNumeric);
+                }
+            } else if (operatorNumeric != null && !operatorNumeric.isEmpty()) {
+                System.out.println("Current Network Operator Code (MCC+MNC): " + operatorNumeric);
+                System.out.println("Operator Name: Not available");
+            } else {
+                System.out.println("Current Network Operator: Not connected or unavailable");
+                
+                // Try to get more info about network state
+                try {
+                    Method getDataStateMethod = telephony.getClass().getMethod("getDataState");
+                    int dataState = (int) getDataStateMethod.invoke(telephony);
+                    System.out.println("Data State: " + getDataStateString(dataState));
+                } catch (Exception e) {
+                    // Ignore
+                }
+                
+                try {
+                    Method getServiceStateMethod = telephony.getClass().getMethod("getServiceStateForSubscriber", int.class, String.class);
+                    Object serviceState = getServiceStateMethod.invoke(telephony, subId, CALLING_PACKAGE);
+                    if (serviceState != null) {
+                        System.out.println("Service State: " + serviceState.toString());
+                    }
+                } catch (Exception e) {
+                    // Ignore
+                }
+            }
+            
+            // Check network selection mode
+            try {
+                Method getNetworkSelectionModeMethod = telephony.getClass().getMethod("getNetworkSelectionMode", int.class);
+                int selectionMode = (int) getNetworkSelectionModeMethod.invoke(telephony, subId);
+                System.out.println("Network Selection Mode: " + (selectionMode == 0 ? "Automatic" : "Manual"));
+            } catch (Exception e) {
+                // Try alternative method
+                try {
+                    Method getNetworkSelectionModeMethod = telephony.getClass().getMethod("getNetworkSelectionModeForSubscriber", int.class);
+                    int selectionMode = (int) getNetworkSelectionModeMethod.invoke(telephony, subId);
+                    System.out.println("Network Selection Mode: " + (selectionMode == 0 ? "Automatic" : "Manual"));
+                } catch (Exception e2) {
+                    System.out.println("Network Selection Mode: Unable to determine");
+                }
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error getting current network operator", e);
+            System.out.println("Error: " + e.getMessage());
+        }
+    }
+    
+    private static String getDataStateString(int state) {
+        switch (state) {
+            case 0: return "Disconnected";
+            case 1: return "Connecting";
+            case 2: return "Connected";
+            case 3: return "Suspended";
+            default: return "Unknown (" + state + ")";
+        }
+    }
+    
+    private static void scanForNetworks(IInterface telephony, int subId) {
+        System.out.println("\nScanning for available networks... This may take up to 2 minutes.");
+        
+        try {
+            // Try to use getCellNetworkScanResults method with correct signature: (int, String, String)
+            Method scanMethod = telephony.getClass().getMethod("getCellNetworkScanResults", int.class, String.class, String.class);
+            System.out.println("Using getCellNetworkScanResults method with 3 parameters...");
+            Object scanResults = scanMethod.invoke(telephony, subId, CALLING_PACKAGE, null);
+            
+            if (scanResults != null) {
+                System.out.println("Scan results received: " + scanResults.getClass().getName());
+                
+                // The result is usually a CellNetworkScanResult object
+                Method getOperatorsMethod = scanResults.getClass().getMethod("getOperators");
+                List<?> operators = (List<?>) getOperatorsMethod.invoke(scanResults);
+                
+                if (operators != null && !operators.isEmpty()) {
+                    System.out.println("\nAvailable Networks:");
+                    System.out.println(STATUS_SEPARATOR);
+                    
+                    int index = 1;
+                    for (Object operator : operators) {
+                        displayOperatorInfo(index++, operator);
+                    }
+                } else {
+                    System.out.println("No networks found in scan (operators list is empty)");
+                }
+            } else {
+                System.out.println("Network scan returned null results");
+            }
+            
+        } catch (NoSuchMethodException e) {
+            System.out.println("getCellNetworkScanResults method not found, trying alternatives...");
+            tryAlternativeNetworkScan(telephony, subId);
+        } catch (Exception e) {
+            Ln.e("Error scanning for networks", e);
+            System.out.println(StatusEmojis.ERROR + " Network scan failed: " + e.getMessage());
+            
+            // Try alternative methods if the main one fails
+            System.out.println("Trying alternative scan methods...");
+            tryAlternativeNetworkScan(telephony, subId);
+        }
+    }
+    
+    private static void tryAlternativeNetworkScan(IInterface telephony, int subId) {
+        // Try different scanning methods that might be available
+        
+        // Method 1: Try getAvailableNetworks
+        try {
+            Method scanMethod = telephony.getClass().getMethod("getAvailableNetworks", int.class);
+            System.out.println("Trying getAvailableNetworks method...");
+            Object result = scanMethod.invoke(telephony, subId);
+            
+            if (result instanceof List) {
+                List<?> operators = (List<?>) result;
+                if (operators != null && !operators.isEmpty()) {
+                    System.out.println("\nAvailable Networks (via getAvailableNetworks):");
+                    System.out.println(STATUS_SEPARATOR);
+                    
+                    int index = 1;
+                    for (Object operator : operators) {
+                        displayOperatorInfo(index++, operator);
+                    }
+                    return; // Success, exit
+                }
+            }
+            System.out.println("getAvailableNetworks returned no results");
+            
+        } catch (NoSuchMethodException e) {
+            System.out.println("getAvailableNetworks method not found");
+        } catch (Exception e) {
+            System.out.println("getAvailableNetworks failed: " + e.getMessage());
+        }
+        
+        // Method 2: Try queryAvailableNetworks
+        try {
+            Method scanMethod = telephony.getClass().getMethod("queryAvailableNetworks", int.class, String.class);
+            System.out.println("Trying queryAvailableNetworks method...");
+            Object result = scanMethod.invoke(telephony, subId, CALLING_PACKAGE);
+            
+            if (result instanceof List) {
+                List<?> operators = (List<?>) result;
+                if (operators != null && !operators.isEmpty()) {
+                    System.out.println("\nAvailable Networks (via queryAvailableNetworks):");
+                    System.out.println(STATUS_SEPARATOR);
+                    
+                    int index = 1;
+                    for (Object operator : operators) {
+                        displayOperatorInfo(index++, operator);
+                    }
+                    return; // Success, exit
+                }
+            }
+            System.out.println("queryAvailableNetworks returned no results");
+            
+        } catch (NoSuchMethodException e) {
+            System.out.println("queryAvailableNetworks method not found");
+        } catch (Exception e) {
+            System.out.println("queryAvailableNetworks failed: " + e.getMessage());
+        }
+        
+        // Method 3: Try getCellNetworkScanResults without package parameter
+        try {
+            Method scanMethod = telephony.getClass().getMethod("getCellNetworkScanResults", int.class);
+            System.out.println("Trying getCellNetworkScanResults without package parameter...");
+            Object scanResults = scanMethod.invoke(telephony, subId);
+            
+            if (scanResults != null) {
+                Method getOperatorsMethod = scanResults.getClass().getMethod("getOperators");
+                List<?> operators = (List<?>) getOperatorsMethod.invoke(scanResults);
+                
+                if (operators != null && !operators.isEmpty()) {
+                    System.out.println("\nAvailable Networks (via getCellNetworkScanResults):");
+                    System.out.println(STATUS_SEPARATOR);
+                    
+                    int index = 1;
+                    for (Object operator : operators) {
+                        displayOperatorInfo(index++, operator);
+                    }
+                    return; // Success, exit
+                }
+            }
+            System.out.println("getCellNetworkScanResults (no package) returned no results");
+            
+        } catch (NoSuchMethodException e) {
+            System.out.println("getCellNetworkScanResults (no package) method not found");
+        } catch (Exception e) {
+            System.out.println("getCellNetworkScanResults (no package) failed: " + e.getMessage());
+        }
+        
+        // Method 4: Try with phoneId instead of subId
+        try {
+            Method getPhoneIdMethod = telephony.getClass().getMethod("getPhoneId", int.class);
+            int phoneId = (int) getPhoneIdMethod.invoke(telephony, subId);
+            
+            Method scanMethod = telephony.getClass().getMethod("getAvailableNetworks", int.class);
+            System.out.println("Trying getAvailableNetworks with phoneId instead of subId...");
+            Object result = scanMethod.invoke(telephony, phoneId);
+            
+            if (result instanceof List) {
+                List<?> operators = (List<?>) result;
+                if (operators != null && !operators.isEmpty()) {
+                    System.out.println("\nAvailable Networks (via phoneId):");
+                    System.out.println(STATUS_SEPARATOR);
+                    
+                    int index = 1;
+                    for (Object operator : operators) {
+                        displayOperatorInfo(index++, operator);
+                    }
+                    return; // Success, exit
+                }
+            }
+            System.out.println("phoneId method returned no results");
+            
+        } catch (Exception e) {
+            System.out.println("phoneId method failed: " + e.getMessage());
+        }
+        
+        System.out.println("\nAll network scanning methods failed or are not supported on this device.");
+        System.out.println("You can try option 4 to see what network-related methods are available.");
+    }
+    
+    private static void displayOperatorInfo(int index, Object operator) {
+        try {
+            // OperatorInfo methods
+            Method getOperatorAlphaLongMethod = operator.getClass().getMethod("getOperatorAlphaLong");
+            Method getOperatorAlphaShortMethod = operator.getClass().getMethod("getOperatorAlphaShort");
+            Method getOperatorNumericMethod = operator.getClass().getMethod("getOperatorNumeric");
+            Method getStateMethod = operator.getClass().getMethod("getState");
+            
+            String alphaLong = (String) getOperatorAlphaLongMethod.invoke(operator);
+            String alphaShort = (String) getOperatorAlphaShortMethod.invoke(operator);
+            String numeric = (String) getOperatorNumericMethod.invoke(operator);
+            Object state = getStateMethod.invoke(operator);
+            
+            String stateStr = "Unknown";
+            if (state != null) {
+                String stateName = state.toString();
+                if (stateName.contains("CURRENT")) {
+                    stateStr = "Current " + StatusEmojis.ACTIVE;
+                } else if (stateName.contains("AVAILABLE")) {
+                    stateStr = "Available";
+                } else if (stateName.contains("FORBIDDEN")) {
+                    stateStr = "Forbidden ⛔";
+                } else {
+                    stateStr = stateName;
+                }
+            }
+            
+            System.out.printf("%d. %s (%s)%n", index, 
+                alphaLong != null ? alphaLong : alphaShort,
+                numeric);
+            System.out.printf("   Status: %s%n", stateStr);
+            System.out.println();
+            
+        } catch (Exception e) {
+            Ln.e("Error displaying operator info", e);
+        }
+    }
+    
+    private static void setAutomaticNetworkSelection(IInterface telephony, int subId) {
+        try {
+            // From the debug output, we see: setNetworkSelectionModeAutomatic(int) → void
+            Method setNetworkSelectionModeAutoMethod = telephony.getClass().getMethod(
+                "setNetworkSelectionModeAutomatic", int.class);
+            
+            setNetworkSelectionModeAutoMethod.invoke(telephony, subId);
+            System.out.println("\n" + StatusEmojis.YES + " Network selection mode set to automatic");
+            System.out.println("The device will now automatically select the best available network");
+            
+        } catch (Exception e) {
+            Ln.e("Error setting automatic network selection", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to set automatic network selection: " + e.getMessage());
+        }
+    }
+    
+    private static void manuallySelectNetwork(IInterface telephony, int subId) {
+        try {
+            // First, we need to scan for networks
+            System.out.println("\nScanning for available networks first...");
+            
+            List<?> operators = null;
+            
+            // Try multiple scanning methods
+            try {
+                Method scanMethod = telephony.getClass().getMethod("getCellNetworkScanResults", int.class, String.class, String.class);
+                Object scanResults = scanMethod.invoke(telephony, subId, CALLING_PACKAGE, null);
+                
+                if (scanResults != null) {
+                    Method getOperatorsMethod = scanResults.getClass().getMethod("getOperators");
+                    operators = (List<?>) getOperatorsMethod.invoke(scanResults);
+                }
+            } catch (Exception e) {
+                System.out.println("Primary scan method failed, trying alternatives...");
+                
+                // Try alternative scanning methods
+                try {
+                    Method scanMethod = telephony.getClass().getMethod("getAvailableNetworks", int.class);
+                    Object result = scanMethod.invoke(telephony, subId);
+                    if (result instanceof List) {
+                        operators = (List<?>) result;
+                    }
+                } catch (Exception e2) {
+                    // Try with calling package
+                    try {
+                        Method scanMethod = telephony.getClass().getMethod("queryAvailableNetworks", int.class, String.class);
+                        Object result = scanMethod.invoke(telephony, subId, CALLING_PACKAGE);
+                        if (result instanceof List) {
+                            operators = (List<?>) result;
+                        }
+                    } catch (Exception e3) {
+                        System.out.println("All scanning methods failed");
+                    }
+                }
+            }
+            
+            if (operators != null && !operators.isEmpty()) {
+                System.out.println("\nAvailable Networks:");
+                System.out.println(STATUS_SEPARATOR);
+                
+                List<String> operatorNumericCodes = new ArrayList<>();
+                int index = 1;
+                
+                for (Object operator : operators) {
+                    displayOperatorInfo(index++, operator);
+                    
+                    // Get numeric code for selection
+                    try {
+                        Method getOperatorNumericMethod = operator.getClass().getMethod("getOperatorNumeric");
+                        String numeric = (String) getOperatorNumericMethod.invoke(operator);
+                        operatorNumericCodes.add(numeric);
+                    } catch (Exception e) {
+                        // If getOperatorNumeric fails, try alternative methods
+                        try {
+                            Method getOperatorNumericMethod = operator.getClass().getMethod("getNumeric");
+                            String numeric = (String) getOperatorNumericMethod.invoke(operator);
+                            operatorNumericCodes.add(numeric);
+                        } catch (Exception e2) {
+                            System.out.println("    Warning: Could not get numeric code for this operator");
+                            operatorNumericCodes.add(null);
+                        }
+                    }
+                }
+                
+                System.out.print("Select network number (or 0 to cancel): ");
+                String choice = scanner.nextLine().trim();
+                
+                try {
+                    int selection = Integer.parseInt(choice);
+                    if (selection == 0) {
+                        System.out.println("Cancelled");
+                        return;
+                    }
+                    
+                    if (selection > 0 && selection <= operatorNumericCodes.size()) {
+                        String selectedOperatorNumeric = operatorNumericCodes.get(selection - 1);
+                        
+                        if (selectedOperatorNumeric == null) {
+                            System.out.println("Cannot select this network (numeric code unavailable)");
+                            return;
+                        }
+                        
+                        // Get the OperatorInfo object for manual selection
+                        Object selectedOperator = operators.get(selection - 1);
+                        
+                        // Try manual network selection with correct method signature: (int, OperatorInfo, boolean)
+                        boolean success = false;
+                        
+                        try {
+                            // Check if the selectedOperator is already the internal OperatorInfo type
+                            Class<?> operatorInfoClass = Class.forName("com.android.internal.telephony.OperatorInfo");
+                            
+                            if (operatorInfoClass.isInstance(selectedOperator)) {
+                                // Direct use if it's already the right type
+                                Method setNetworkSelectionManualMethod = telephony.getClass().getMethod(
+                                    "setNetworkSelectionModeManual", int.class, operatorInfoClass, boolean.class);
+                                
+                                boolean result = (boolean) setNetworkSelectionManualMethod.invoke(
+                                    telephony, subId, selectedOperator, false);
+                                success = result;
+                            } else {
+                                throw new Exception("Not internal OperatorInfo type");
+                            }
+                        } catch (Exception e) {
+                            System.out.println("Direct use failed: " + e.getMessage());
+                            
+                            // Fallback: create new internal OperatorInfo
+                            try {
+                                Class<?> operatorInfoClass = Class.forName("com.android.internal.telephony.OperatorInfo");
+                                
+                                // Get operator details from the selected operator
+                                String operatorName = selectedOperatorNumeric;
+                                String operatorShortName = selectedOperatorNumeric;
+                                try {
+                                    Method getAlphaLongMethod = selectedOperator.getClass().getMethod("getOperatorAlphaLong");
+                                    Method getAlphaShortMethod = selectedOperator.getClass().getMethod("getOperatorAlphaShort");
+                                    operatorName = (String) getAlphaLongMethod.invoke(selectedOperator);
+                                    operatorShortName = (String) getAlphaShortMethod.invoke(selectedOperator);
+                                } catch (Exception ex) {
+                                    // Use numeric code as fallback
+                                }
+                                
+                                // Create using Parcel
+                                android.os.Parcel parcel = android.os.Parcel.obtain();
+                                try {
+                                    parcel.writeString(operatorName);
+                                    parcel.writeString(operatorShortName);
+                                    parcel.writeString(selectedOperatorNumeric);
+                                    
+                                    Class<?> stateClass = Class.forName("com.android.internal.telephony.OperatorInfo$State");
+                                    Object availableState = Enum.valueOf((Class<Enum>) stateClass, "AVAILABLE");
+                                    parcel.writeSerializable((java.io.Serializable) availableState);
+                                    
+                                    parcel.writeInt(0); // ran
+                                    parcel.setDataPosition(0);
+                                    
+                                    java.lang.reflect.Field creatorField = operatorInfoClass.getField("CREATOR");
+                                    android.os.Parcelable.Creator<?> creator = (android.os.Parcelable.Creator<?>) creatorField.get(null);
+                                    Object operatorInfo = creator.createFromParcel(parcel);
+                                    
+                                    Method setNetworkSelectionManualMethod = telephony.getClass().getMethod(
+                                        "setNetworkSelectionModeManual", int.class, operatorInfoClass, boolean.class);
+                                    
+                                    boolean result = (boolean) setNetworkSelectionManualMethod.invoke(
+                                        telephony, subId, operatorInfo, false);
+                                    success = result;
+                                } finally {
+                                    parcel.recycle();
+                                }
+                            } catch (Exception e2) {
+                                System.out.println("Failed to create internal OperatorInfo: " + e2.getMessage());
+                                return;
+                            }
+                        }
+                        
+                        if (success) {
+                            System.out.println("\n" + StatusEmojis.YES + " Network selection successful");
+                            System.out.println("Connecting to selected network: " + selectedOperatorNumeric);
+                        } else {
+                            System.out.println("\n" + StatusEmojis.ERROR + " Network selection failed");
+                            System.out.println("The selected network may not be available or compatible");
+                        }
+                    } else {
+                        System.out.println("Invalid selection");
+                    }
+                } catch (NumberFormatException e) {
+                    System.out.println("Invalid input");
+                }
+            } else {
+                System.out.println("No networks found or network scanning failed");
+                System.out.println("You may need to:");
+                System.out.println("1. Check if the device has network connectivity");
+                System.out.println("2. Ensure the SIM card is properly inserted and activated");
+                System.out.println("3. Try option 4 to see available network methods");
+            }
+            
+        } catch (Exception e) {
+            Ln.e("Error in manual network selection", e);
+            System.out.println(StatusEmojis.ERROR + " Manual network selection failed: " + e.getMessage());
+        }
+    }
+    
+    private static void manuallyConnectByPLMN(IInterface telephony, int subId) {
+        System.out.println("\n📡 Manual Network Connection by PLMN\n");
+        
+        System.out.println("Enter the PLMN (MCC+MNC) of the network you want to connect to.");
+        System.out.println("Examples:");
+        System.out.println("  - 310260 (T-Mobile US)");
+        System.out.println("  - 310410 (AT&T US)");
+        System.out.println("  - 313100 (FirstNet)");
+        System.out.println("  - 311480 (Verizon US)");
+        System.out.println();
+        System.out.print("Enter PLMN code (or 0 to cancel): ");
+        
+        String plmn = scanner.nextLine().trim();
+        
+        if (plmn.equals("0")) {
+            System.out.println("Cancelled");
+            return;
+        }
+        
+        // Validate PLMN format (should be 5 or 6 digits)
+        if (!plmn.matches("\\d{5,6}")) {
+            System.out.println(StatusEmojis.ERROR + " Invalid PLMN format. Must be 5 or 6 digits.");
+            return;
+        }
+        
+        try {
+            // First, let's debug what methods are available
+            System.out.println("\nDebug: Looking for network selection methods...");
+            Method[] methods = telephony.getClass().getMethods();
+            for (Method method : methods) {
+                String methodName = method.getName();
+                if (methodName.contains("setNetworkSelectionMode") || 
+                    methodName.contains("selectNetwork") ||
+                    methodName.contains("NetworkManual")) {
+                    System.out.println("Found method: " + methodName + " with params: " + 
+                        Arrays.toString(method.getParameterTypes()));
+                }
+            }
+            
+            // First, try to create OperatorInfo and use the standard method
+            boolean success = false;
+            
+            try {
+                // Use the internal telephony OperatorInfo class
+                Class<?> operatorInfoClass = Class.forName("com.android.internal.telephony.OperatorInfo");
+                
+                // Create OperatorInfo object using Parcel
+                android.os.Parcel parcel = android.os.Parcel.obtain();
+                try {
+                    // Write the OperatorInfo data to parcel
+                    parcel.writeString(plmn); // operatorAlphaLong
+                    parcel.writeString(plmn); // operatorAlphaShort
+                    parcel.writeString(plmn); // operatorNumeric
+                    
+                    // Write the State enum - AVAILABLE
+                    Class<?> stateClass = Class.forName("com.android.internal.telephony.OperatorInfo$State");
+                    Object availableState = Enum.valueOf((Class<Enum>) stateClass, "AVAILABLE");
+                    parcel.writeSerializable((java.io.Serializable) availableState);
+                    
+                    // Write the RAN type (Radio Access Network) - 0 for unknown, or specific values
+                    parcel.writeInt(0); // ran
+                    
+                    // Reset parcel position
+                    parcel.setDataPosition(0);
+                    
+                    // Use CREATOR to create OperatorInfo from parcel
+                    java.lang.reflect.Field creatorField = operatorInfoClass.getField("CREATOR");
+                    android.os.Parcelable.Creator<?> creator = (android.os.Parcelable.Creator<?>) creatorField.get(null);
+                    Object operatorInfo = creator.createFromParcel(parcel);
+                    
+                    Method setNetworkSelectionManualMethod = telephony.getClass().getMethod(
+                        "setNetworkSelectionModeManual", int.class, operatorInfoClass, boolean.class);
+                    
+                    System.out.println("\nAttempting to connect to network with PLMN: " + plmn);
+                    
+                    boolean result = (boolean) setNetworkSelectionManualMethod.invoke(
+                        telephony, subId, operatorInfo, false);
+                    success = result;
+                    
+                } finally {
+                    parcel.recycle();
+                }
+                
+            } catch (Exception e) {
+                System.out.println("Parcel-based method failed: " + e.getMessage());
+                e.printStackTrace();
+                
+                // Try direct constructor approach with internal class
+                try {
+                    Class<?> operatorInfoClass = Class.forName("com.android.internal.telephony.OperatorInfo");
+                    Class<?> stateClass = Class.forName("com.android.internal.telephony.OperatorInfo$State");
+                    
+                    // Get the constructor (String, String, String, State, int)
+                    Object availableState = Enum.valueOf((Class<Enum>) stateClass, "AVAILABLE");
+                    
+                    // Try to find and use the constructor
+                    Object operatorInfo = operatorInfoClass.getConstructor(
+                        String.class, String.class, String.class, stateClass, int.class)
+                        .newInstance(plmn, plmn, plmn, availableState, 0);
+                    
+                    Method setNetworkSelectionManualMethod = telephony.getClass().getMethod(
+                        "setNetworkSelectionModeManual", int.class, operatorInfoClass, boolean.class);
+                    
+                    System.out.println("Trying direct constructor method...");
+                    
+                    boolean result = (boolean) setNetworkSelectionManualMethod.invoke(
+                        telephony, subId, operatorInfo, false);
+                    success = result;
+                    
+                } catch (Exception e2) {
+                    System.out.println("Direct constructor method failed: " + e2.getMessage());
+                    
+                    // Last resort: try to call the method with null OperatorInfo
+                    try {
+                        // Some devices might accept null and use the PLMN from elsewhere
+                        Class<?> operatorInfoClass = Class.forName("com.android.internal.telephony.OperatorInfo");
+                        Method setNetworkSelectionManualMethod = telephony.getClass().getMethod(
+                            "setNetworkSelectionModeManual", int.class, operatorInfoClass, boolean.class);
+                        
+                        System.out.println("Trying with null OperatorInfo...");
+                        
+                        // First set the network operator property
+                        try {
+                            Method setNetworkOperatorMethod = telephony.getClass().getMethod(
+                                "setNetworkOperator", int.class, String.class);
+                            setNetworkOperatorMethod.invoke(telephony, subId, plmn);
+                        } catch (Exception ex) {
+                            // Ignore if method doesn't exist
+                        }
+                        
+                        boolean result = (boolean) setNetworkSelectionManualMethod.invoke(
+                            telephony, subId, null, false);
+                        success = result;
+                        
+                    } catch (Exception e3) {
+                        System.out.println("Null OperatorInfo method failed: " + e3.getMessage());
+                    }
+                }
+            }
+            
+            if (success) {
+                System.out.println("\n" + StatusEmojis.YES + " Network connection request sent successfully");
+                System.out.println("The device will attempt to connect to network with PLMN: " + plmn);
+                System.out.println("\nNote: Connection may take a few seconds. The network must be:");
+                System.out.println("  - Available in your current location");
+                System.out.println("  - Compatible with your SIM/eSIM");
+                System.out.println("  - Not forbidden by your carrier");
+            } else {
+                System.out.println("\n" + StatusEmojis.ERROR + " Failed to send network connection request");
+                System.out.println("Possible reasons:");
+                System.out.println("  - Invalid PLMN code");
+                System.out.println("  - Network not available");
+                System.out.println("  - SIM/eSIM not compatible with this network");
+                System.out.println("  - Device restrictions");
+            }
+            
+            // Wait a moment and check the current network
+            Thread.sleep(3000);
+            System.out.println("\nChecking current network status...");
+            displayCurrentNetworkOperator(telephony, subId);
+            
+        } catch (Exception e) {
+            Ln.e("Error connecting to network by PLMN", e);
+            System.out.println(StatusEmojis.ERROR + " Failed to connect to network: " + e.getMessage());
         }
     }
     
