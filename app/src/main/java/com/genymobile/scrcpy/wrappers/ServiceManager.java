@@ -22,6 +22,7 @@ public final class ServiceManager {
     private static TelephonyManager telephonyManager;
     private static SubscriptionService subscriptionService;
     private static ConnectivityManager connectivityManager;
+    private static SmsManager smsManager;
 
     private ServiceManager() {
         /* not instantiable */
@@ -56,5 +57,24 @@ public final class ServiceManager {
             connectivityManager = ConnectivityManager.create();
         }
         return connectivityManager;
+    }
+
+    public static boolean isRilAvailable() {
+        return RIL.isRilAvailable();
+    }
+
+    public static Object getRadioServiceProxy() {
+        return RIL.getRadioServiceProxy();
+    }
+
+    public static Object getRadioServiceProxy(int service) {
+        return RIL.getRadioServiceProxy(service);
+    }
+
+    public static SmsManager getSmsManager() {
+        if (smsManager == null) {
+            smsManager = SmsManager.create();
+        }
+        return smsManager;
     }
 }

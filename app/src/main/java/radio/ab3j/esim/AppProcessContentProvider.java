@@ -34,7 +34,7 @@ public class AppProcessContentProvider extends ContentProvider {
 
         try (OutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])) {
             String apk = this.getContext().getPackageCodePath();
-            String command = "app_process -cp " + apk + " / radio.ab3j.esim.ShellMain <&1";
+            String command = "app_process -cp " + apk + " / radio.ab3j.esim.ShellMain \"$@\" <&1";
             output.write(command.getBytes());
             output.flush();
             output.close();
@@ -50,7 +50,7 @@ public class AppProcessContentProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
         String apk = this.getContext().getPackageCodePath();
-        String command = "app_process -cp " + apk + " / radio.ab3j.esim.ShellMain <&1";
+        String command = "app_process -cp " + apk + " / radio.ab3j.esim.ShellMain \"$@\" <&1";
         MatrixCursor cursor = new MatrixCursor(new String[]{""});
         cursor.addRow(new Object[]{"\n" + command});
         return cursor;
